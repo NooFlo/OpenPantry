@@ -368,6 +368,12 @@ input {
 
 /* ---------- generic bits ---------- */
 
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
 .icon-btn {
   width: 38px;
   height: 38px;

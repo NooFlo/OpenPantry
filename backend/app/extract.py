@@ -150,7 +150,7 @@ def html_to_text(html: str) -> str:
     return "\n".join(lines)
 
 
-def llm_recipe(text: str, source: str) -> dict | None:
+def llm_recipe(text: str, source: str, choice: dict | None = None, cloud: dict | None = None) -> dict | None:
     prompt = (
         "Extract the recipe from the following text. Respond with JSON only, in this exact shape:\n"
         '{"title": str, "basePortions": number, '
@@ -159,7 +159,7 @@ def llm_recipe(text: str, source: str) -> dict | None:
         "Convert amounts to the given units (1000 g -> 1 kg, 500 ml -> 0.5 l). "
         "Use null amount and unit for ingredients without a measurable quantity.\n\n" + text[:6000]
     )
-    data = llm.generate_json(prompt)
+    data = llm.generate_json(prompt, choice, cloud)
     if not isinstance(data, dict) or "ingredients" not in data:
         return None
     ingredients = []
@@ -181,11 +181,11 @@ def llm_recipe(text: str, source: str) -> dict | None:
     }
 
 
-def import_recipe_from_text(text: str, source: str = "pasted") -> dict:
-    return llm_recipe(text, source) or heuristic_recipe(text, source)
+def import_recipe_from_text(text: str, source: str = "pasted", choice: dict | None = None, cloud: dict | None = None) -> dict:
+    return llm_recipe(text, source, choice, cloud) or heuristic_recipe(text, source)
 
 
-def import_recipe_from_url(url: str) -> dict:
+def import_recipe_from_url(url: str, choice: dict | None = None, cloud: dict | None = None) -> dict:
     response = httpx.get(url, timeout=20, follow_redirects=True,
                          headers={"User-Agent": "Mozilla/5.0 (compatible; OpenPantry/0.1)"})
     response.raise_for_status()
@@ -194,8 +194,8 @@ def import_recipe_from_url(url: str) -> dict:
         schema_recipe = extract_schema_org_recipe(response.text, url)
         if schema_recipe:
             return schema_recipe
-        return import_recipe_from_text(html_to_text(response.text), url)
-    return import_recipe_from_text(response.text, url)
+        return import_recipe_from_text(html_to_text(response.text), url, choice, cloud)
+    return import_recipe_from_text(response.text, url, choice, cloud)
 
 
 def ocr_receipt_file(path: str) -> str | None:
@@ -212,7 +212,7 @@ def ocr_receipt_file(path: str) -> str | None:
     return result.stdout
 
 
-def llm_receipt_items(ocr_text: str) -> list[dict] | None:
+def llm_receipt_items(ocr_text: str, choice: dict | None = None, cloud: dict | None = None) -> dict | None:
     prompt = (
         "Extract the purchased items from this grocery receipt OCR text. Respond with JSON only:\n"
         '{"store": str, "date": "YYYY-MM-DD", "total": number, '
@@ -220,7 +220,7 @@ def llm_receipt_items(ocr_text: str) -> list[dict] | None:
         "Skip non-product lines (totals, taxes, payment info). quantity is the number of packages.\n\n"
         + ocr_text[:6000]
     )
-    data = llm.generate_json(prompt)
+    data = llm.generate_json(prompt, choice, cloud)
     if not isinstance(data, dict) or not isinstance(data.get("items"), list):
         return None
     items = [

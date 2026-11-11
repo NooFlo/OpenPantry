@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import type { Item, Recipe, Receipt, ShoppingListEntry, Tab } from "./types";
+import type { Item, ModelList, Recipe, Receipt, Settings, SettingsPatch, ShoppingListEntry, Tab } from "./types";
 import {
   addMissingToShoppingList,
   addToShoppingList,
@@ -7,11 +7,14 @@ import {
   consumeItem,
   cookRecipe,
   fetchItems,
+  fetchModels,
   fetchReceipts,
   fetchRecipes,
+  fetchSettings,
   matchRecipeIngredient,
   markUntracked,
   removeFromShoppingList,
+  updateSettings,
 } from "./api";
 import TabBar from "./components/TabBar";
 import HomeScreen from "./screens/HomeScreen";
@@ -19,6 +22,14 @@ import InventoryScreen from "./screens/InventoryScreen";
 import RecipesScreen from "./screens/RecipesScreen";
 
 type Theme = "light" | "dark";
+
+const DEFAULT_SETTINGS: Settings = {
+  receiptsModel: { provider: "local", model: "qwen2.5:3b-instruct" },
+  recipesModel: { provider: "local", model: "qwen2.5:3b-instruct" },
+  cloudBaseUrl: "https://api.mistral.ai/v1",
+  cloudModel: "mistral-small-latest",
+  cloudKeySet: false,
+};
 
 function initialTheme(): Theme {
   const stored = localStorage.getItem("theme");
@@ -34,6 +45,8 @@ export default function App() {
   const [recipes, setRecipes] = useState<Recipe[]>([]);
   const [portions, setPortions] = useState(2);
   const [shoppingList, setShoppingList] = useState<ShoppingListEntry[]>([]);
+  const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS);
+  const [models, setModels] = useState<ModelList>({ local: [], llmAvailable: false });
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -44,7 +57,13 @@ export default function App() {
     fetchItems().then(setItems);
     fetchReceipts().then(setReceipts);
     fetchRecipes().then(setRecipes);
+    fetchSettings().then(setSettings).catch(console.error);
+    fetchModels().then(setModels).catch(console.error);
   }, []);
+
+  const saveSettings = (patch: SettingsPatch) => {
+    updateSettings(patch).then(setSettings).catch(console.error);
+  };
 
   const consume = (id: string, amount: number) => {
     setItems((prev) =>
@@ -151,6 +170,9 @@ export default function App() {
           receipts={receipts}
           onConsume={consume}
           onMatchItem={matchReceiptItem}
+          settings={settings}
+          models={models}
+          onSaveSettings={saveSettings}
           theme={theme}
           onToggleTheme={toggleTheme}
         />
@@ -166,6 +188,9 @@ export default function App() {
           onAddMissing={addMissing}
           onMatchIngredient={matchIngredient}
           onMarkUntracked={untrackIngredient}
+          settings={settings}
+          models={models}
+          onSaveSettings={saveSettings}
           theme={theme}
           onToggleTheme={toggleTheme}
         />

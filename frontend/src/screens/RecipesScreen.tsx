@@ -1,10 +1,11 @@
 import { useState } from "react";
-import type { Item, Recipe } from "../types";
+import type { Item, ModelList, Recipe, Settings, SettingsPatch } from "../types";
 import { importRecipe } from "../api";
 import { maxPortions, missingCount, missingAmount, scaledAmount } from "../lib/cooking";
 import Sheet from "../components/Sheet";
 import ThemeToggle from "../components/ThemeToggle";
-import { IconCheck, IconMinus, IconPlus } from "../components/Icons";
+import ModelSettingsSheet from "../components/ModelSettingsSheet";
+import { IconCheck, IconGear, IconMinus, IconPlus } from "../components/Icons";
 
 interface RecipesScreenProps {
   recipes: Recipe[];
@@ -16,6 +17,9 @@ interface RecipesScreenProps {
   onAddMissing: (recipe: Recipe) => void;
   onMatchIngredient: (recipeId: string, ingredientId: string, itemName: string) => void;
   onMarkUntracked: (recipeId: string, ingredientId: string) => void;
+  settings: Settings;
+  models: ModelList;
+  onSaveSettings: (patch: SettingsPatch) => void;
   theme: "light" | "dark";
   onToggleTheme: () => void;
 }
@@ -30,11 +34,15 @@ export default function RecipesScreen({
   onAddMissing,
   onMatchIngredient,
   onMarkUntracked,
+  settings,
+  models,
+  onSaveSettings,
   theme,
   onToggleTheme,
 }: RecipesScreenProps) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [importOpen, setImportOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [kind, setKind] = useState<"link" | "text">("link");
   const [value, setValue] = useState("");
   const [busy, setBusy] = useState(false);
@@ -57,7 +65,12 @@ export default function RecipesScreen({
     <div className="screen">
       <header className="screen-header">
         <h1 className="screen-title">Recipes</h1>
-        <ThemeToggle theme={theme} onToggle={onToggleTheme} />
+        <div className="header-actions">
+          <button className="icon-btn" onClick={() => setSettingsOpen(true)} aria-label="Model settings">
+            <IconGear size={19} />
+          </button>
+          <ThemeToggle theme={theme} onToggle={onToggleTheme} />
+        </div>
       </header>
 
       <div className="qty-stepper">
@@ -223,6 +236,16 @@ export default function RecipesScreen({
             </button>
           </div>
         </Sheet>
+      )}
+      {settingsOpen && (
+        <ModelSettingsSheet
+          task="recipes"
+          settings={settings}
+          localModels={models.local}
+          llmAvailable={models.llmAvailable}
+          onSave={onSaveSettings}
+          onClose={() => setSettingsOpen(false)}
+        />
       )}
     </div>
   );

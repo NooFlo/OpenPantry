@@ -57,3 +57,29 @@ export interface ShoppingListEntry {
 }
 
 export type Tab = "home" | "inventory" | "recipes";
+
+export interface ModelChoice {
+  provider: "local" | "cloud";
+  model: string;
+}
+
+export interface Settings {
+  receiptsModel: ModelChoice;
+  recipesModel: ModelChoice;
+  cloudBaseUrl: string;
+  cloudModel: string;
+  cloudKeySet: boolean;
+}
+
+export interface SettingsPatch {
+  receiptsModel?: ModelChoice;
+  recipesModel?: ModelChoice;
+  cloudBaseUrl?: string;
+  cloudModel?: string;
+  cloudApiKey?: string;
+}
+
+export interface ModelList {
+  local: string[];
+  llmAvailable: boolean;
+}
