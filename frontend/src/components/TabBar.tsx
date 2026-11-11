@@ -1,10 +1,10 @@
 import type { Tab } from "../types";
-import { IconHome, IconInventory, IconReceipt } from "./Icons";
+import { IconHome, IconInventory, IconRecipe } from "./Icons";
 
 const tabs: { id: Tab; label: string; icon: (props: { size?: number }) => JSX.Element }[] = [
-  { id: "receipts", label: "Receipts", icon: IconReceipt },
   { id: "home", label: "Home", icon: IconHome },
   { id: "inventory", label: "Inventory", icon: IconInventory },
+  { id: "recipes", label: "Recipes", icon: IconRecipe },
 ];
 
 interface TabBarProps {

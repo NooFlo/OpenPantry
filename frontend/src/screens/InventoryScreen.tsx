@@ -1,12 +1,15 @@
 import { useMemo, useState } from "react";
-import type { Item, Unit } from "../types";
+import type { Item, Receipt, Unit } from "../types";
 import { IconBarcode, IconMinus, IconSearch } from "../components/Icons";
 import Sheet from "../components/Sheet";
 import ThemeToggle from "../components/ThemeToggle";
+import ReceiptsView from "./ReceiptsView";
 
 interface InventoryScreenProps {
   items: Item[];
+  receipts: Receipt[];
   onConsume: (id: string, amount: number) => void;
+  onMatchItem: (receiptId: string, itemId: string, productName: string) => void;
   theme: "light" | "dark";
   onToggleTheme: () => void;
 }
@@ -15,7 +18,8 @@ function formatQty(qty: number, unit: Unit) {
   return `${qty} ${unit}`;
 }
 
-export default function InventoryScreen({ items, onConsume, theme, onToggleTheme }: InventoryScreenProps) {
+export default function InventoryScreen({ items, receipts, onConsume, onMatchItem, theme, onToggleTheme }: InventoryScreenProps) {
+  const [view, setView] = useState<"items" | "receipts">("items");
   const [query, setQuery] = useState("");
   const [category, setCategory] = useState<string | null>(null);
   const [selected, setSelected] = useState<Item | null>(null);
@@ -32,80 +36,95 @@ export default function InventoryScreen({ items, onConsume, theme, onToggleTheme
   return (
     <div className="screen">
       <header className="screen-header">
-        <h1 className="screen-title">Inventory</h1>
+        <h1 className="screen-title">{view === "items" ? "Inventory" : "Receipts"}</h1>
         <ThemeToggle theme={theme} onToggle={onToggleTheme} />
       </header>
 
-      <div className="search">
-        <IconSearch size={18} />
-        <input
-          type="text"
-          placeholder="Search items"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-        />
-      </div>
-
-      <div className="chip-row">
-        <button className={category === null ? "chip active" : "chip"} onClick={() => setCategory(null)}>
-          All
+      <div className="segmented">
+        <button className={view === "items" ? "active" : ""} onClick={() => setView("items")}>
+          Items
         </button>
-        {categories.map((c) => (
-          <button key={c} className={category === c ? "chip active" : "chip"} onClick={() => setCategory(c)}>
-            {c}
-          </button>
-        ))}
+        <button className={view === "receipts" ? "active" : ""} onClick={() => setView("receipts")}>
+          Receipts
+        </button>
       </div>
 
-      <div>
-        {filtered.map((item) => (
-          <button key={item.id} className="list-row" onClick={() => setSelected(item)}>
-            <div className="info">
-              <div className="item-name">{item.name}</div>
-              <div className="item-sub">{item.category}</div>
-            </div>
-            <span className={item.quantity <= item.minQuantity ? "qty low" : "qty"}>
-              {formatQty(item.quantity, item.unit)}
-            </span>
-          </button>
-        ))}
-        {filtered.length === 0 && <div className="empty-state">No items match.</div>}
-      </div>
-
-      {selectedLive && (
-        <Sheet onClose={() => setSelected(null)}>
-          <h2 className="sheet-title">{selectedLive.name}</h2>
-          <p className="sheet-sub">
-            {selectedLive.category}
-            {selectedLive.barcode ? ` · ${selectedLive.barcode}` : ""}
-          </p>
-
-          <div className="qty-stepper">
-            <button onClick={() => onConsume(selectedLive.id, selectedLive.packageSize)} aria-label="Consume one package">
-              <IconMinus size={18} />
-            </button>
-            <span className="value">
-              {formatQty(selectedLive.quantity, selectedLive.unit)} in stock
-            </span>
-            <span style={{ width: 40 }} />
+      {view === "receipts" ? (
+        <ReceiptsView receipts={receipts} onMatchItem={onMatchItem} />
+      ) : (
+        <>
+          <div className="search">
+            <IconSearch size={18} />
+            <input
+              type="text"
+              placeholder="Search items"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+            />
           </div>
 
-          <div className="sheet-actions">
-            <button className="btn btn-ghost" onClick={() => setSelected(null)}>
-              Close
+          <div className="chip-row">
+            <button className={category === null ? "chip active" : "chip"} onClick={() => setCategory(null)}>
+              All
             </button>
-            <button
-              className="btn btn-primary"
-              onClick={() => {
-                onConsume(selectedLive.id, selectedLive.packageSize);
-                setSelected(null);
-              }}
-            >
-              <IconBarcode size={16} />
-              Consume {selectedLive.packageSize} {selectedLive.unit}
-            </button>
+            {categories.map((c) => (
+              <button key={c} className={category === c ? "chip active" : "chip"} onClick={() => setCategory(c)}>
+                {c}
+              </button>
+            ))}
           </div>
-        </Sheet>
+
+          <div>
+            {filtered.map((item) => (
+              <button key={item.id} className="list-row" onClick={() => setSelected(item)}>
+                <div className="info">
+                  <div className="item-name">{item.name}</div>
+                  <div className="item-sub">{item.category}</div>
+                </div>
+                <span className={item.quantity <= item.minQuantity ? "qty low" : "qty"}>
+                  {formatQty(item.quantity, item.unit)}
+                </span>
+              </button>
+            ))}
+            {filtered.length === 0 && <div className="empty-state">No items match.</div>}
+          </div>
+
+          {selectedLive && (
+            <Sheet onClose={() => setSelected(null)}>
+              <h2 className="sheet-title">{selectedLive.name}</h2>
+              <p className="sheet-sub">
+                {selectedLive.category}
+                {selectedLive.barcode ? ` · ${selectedLive.barcode}` : ""}
+              </p>
+
+              <div className="qty-stepper">
+                <button onClick={() => onConsume(selectedLive.id, selectedLive.packageSize)} aria-label="Consume one package">
+                  <IconMinus size={18} />
+                </button>
+                <span className="value">
+                  {formatQty(selectedLive.quantity, selectedLive.unit)} in stock
+                </span>
+                <span style={{ width: 40 }} />
+              </div>
+
+              <div className="sheet-actions">
+                <button className="btn btn-ghost" onClick={() => setSelected(null)}>
+                  Close
+                </button>
+                <button
+                  className="btn btn-primary"
+                  onClick={() => {
+                    onConsume(selectedLive.id, selectedLive.packageSize);
+                    setSelected(null);
+                  }}
+                >
+                  <IconBarcode size={16} />
+                  Consume {selectedLive.packageSize} {selectedLive.unit}
+                </button>
+              </div>
+            </Sheet>
+          )}
+        </>
       )}
     </div>
   );

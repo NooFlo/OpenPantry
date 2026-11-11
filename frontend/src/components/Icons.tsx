@@ -112,6 +112,17 @@ export function IconBarcode(props: IconProps) {
   );
 }
 
+export function IconRecipe(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <rect x="5" y="3" width="14" height="18" rx="2" />
+      <path d="M9 7.5h6" />
+      <path d="M9 11.5h6" />
+      <path d="M9 15.5h4" />
+    </Svg>
+  );
+}
+
 export function IconMinus(props: IconProps) {
   return (
     <Svg {...props}>

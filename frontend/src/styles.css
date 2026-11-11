@@ -149,6 +149,223 @@ input {
   background: var(--surface);
 }
 
+/* ---------- segmented control ---------- */
+
+.segmented {
+  display: flex;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 3px;
+  margin-bottom: 16px;
+}
+
+.segmented button {
+  flex: 1;
+  padding: 8px 0;
+  border-radius: 9px;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--text-2);
+  transition: background 120ms ease, color 120ms ease;
+}
+
+.segmented button.active {
+  background: var(--bg);
+  color: var(--text);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
+}
+
+/* ---------- recipes ---------- */
+
+.recipe-card {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  text-align: left;
+  margin-bottom: 10px;
+  transition: opacity 160ms ease;
+}
+
+.recipe-card.dim {
+  opacity: 0.5;
+}
+
+.badge {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 4px 9px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+.badge.cookable {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.badge.missing {
+  background: var(--surface-2);
+  color: var(--text-2);
+}
+
+.ing-list {
+  margin-bottom: 6px;
+}
+
+.ing-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 10px 0;
+}
+
+.ing-row + .ing-row {
+  border-top: 1px solid var(--border);
+}
+
+.ing-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.ing-name {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.ing-right {
+  text-align: right;
+  white-space: nowrap;
+}
+
+.ing-qty {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.ing-status {
+  font-size: 12px;
+  margin-top: 2px;
+}
+
+.ing-status.ok {
+  color: var(--ok);
+}
+
+.ing-status.lacking {
+  color: var(--accent);
+}
+
+.ing-status.unmapped {
+  color: var(--text-3);
+  font-style: italic;
+}
+
+.ing-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+  flex-wrap: wrap;
+}
+
+.sheet-h3 {
+  font-size: 13px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-2);
+  margin: 18px 0 10px;
+}
+
+.steps {
+  margin: 0 0 20px;
+  padding-left: 20px;
+  color: var(--text-2);
+  font-size: 14px;
+  line-height: 1.55;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.btn-sm {
+  padding: 7px 12px;
+  font-size: 13px;
+}
+
+.btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.yn-row {
+  display: flex;
+  gap: 8px;
+}
+
+.sl-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 0;
+}
+
+.sl-row + .sl-row {
+  border-top: 1px solid var(--border);
+}
+
+.sl-row .qty {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-2);
+  white-space: nowrap;
+}
+
+/* ---------- import sheet ---------- */
+
+.import-input {
+  width: 100%;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 12px 14px;
+  color: var(--text);
+  font-size: 14px;
+  outline: none;
+  margin-bottom: 12px;
+}
+
+.import-input:focus,
+.import-area:focus {
+  border-color: var(--accent);
+}
+
+.import-area {
+  width: 100%;
+  min-height: 120px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 12px 14px;
+  color: var(--text);
+  font-size: 14px;
+  resize: vertical;
+  outline: none;
+  margin-bottom: 12px;
+}
+
+/* ---------- sheet scroll ---------- */
+
+.sheet {
+  max-height: 88dvh;
+  overflow-y: auto;
+}
+
 /* ---------- generic bits ---------- */
 
 .icon-btn {

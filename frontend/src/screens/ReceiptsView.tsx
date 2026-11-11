@@ -1,18 +1,15 @@
 import { useState } from "react";
 import type { Receipt } from "../types";
 import { IconBarcode, IconCheck, IconCopy } from "../components/Icons";
-import ThemeToggle from "../components/ThemeToggle";
 
-interface ReceiptsScreenProps {
+interface ReceiptsViewProps {
   receipts: Receipt[];
   onMatchItem: (receiptId: string, itemId: string, productName: string) => void;
-  theme: "light" | "dark";
-  onToggleTheme: () => void;
 }
 
 const FORWARD_ADDRESS = "receipts@pantry.local";
 
-export default function ReceiptsScreen({ receipts, onMatchItem, theme, onToggleTheme }: ReceiptsScreenProps) {
+export default function ReceiptsView({ receipts, onMatchItem }: ReceiptsViewProps) {
   const [openId, setOpenId] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
 
@@ -27,12 +24,7 @@ export default function ReceiptsScreen({ receipts, onMatchItem, theme, onToggleT
   };
 
   return (
-    <div className="screen">
-      <header className="screen-header">
-        <h1 className="screen-title">Receipts</h1>
-        <ThemeToggle theme={theme} onToggle={onToggleTheme} />
-      </header>
-
+    <div>
       <div className="card forward-card">
         <div className="info">
           <div className="item-name">Forward receipts by mail</div>

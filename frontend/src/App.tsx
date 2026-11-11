@@ -1,10 +1,10 @@
 import { useEffect, useState } from "react";
-import type { Item, Receipt, Tab } from "./types";
-import { fetchItems, fetchReceipts } from "./api";
+import type { Item, Recipe, Receipt, ShoppingListEntry, Tab } from "./types";
+import { fetchItems, fetchReceipts, fetchRecipes } from "./api";
 import TabBar from "./components/TabBar";
 import HomeScreen from "./screens/HomeScreen";
 import InventoryScreen from "./screens/InventoryScreen";
-import ReceiptsScreen from "./screens/ReceiptsScreen";
+import RecipesScreen from "./screens/RecipesScreen";
 
 type Theme = "light" | "dark";
 
@@ -19,7 +19,9 @@ export default function App() {
   const [theme, setTheme] = useState<Theme>(initialTheme);
   const [items, setItems] = useState<Item[]>([]);
   const [receipts, setReceipts] = useState<Receipt[]>([]);
-  const [shoppingList, setShoppingList] = useState<Set<string>>(new Set());
+  const [recipes, setRecipes] = useState<Recipe[]>([]);
+  const [portions, setPortions] = useState(2);
+  const [shoppingList, setShoppingList] = useState<ShoppingListEntry[]>([]);
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -29,21 +31,73 @@ export default function App() {
   useEffect(() => {
     fetchItems().then(setItems);
     fetchReceipts().then(setReceipts);
+    fetchRecipes().then(setRecipes);
   }, []);
 
   const consume = (id: string, amount: number) => {
     setItems((prev) =>
-      prev.map((i) => (i.id === id ? { ...i, quantity: Math.max(0, Math.round((i.quantity - amount) * 100) / 100) } : i))
+      prev.map((i) =>
+        i.id === id
+          ? { ...i, quantity: Math.max(0, Math.round((i.quantity - amount) * 1000) / 1000), uncertain: false }
+          : i
+      )
+    );
+  };
+
+  const confirmLow = (id: string, isLow: boolean) => {
+    setItems((prev) =>
+      prev.map((i) =>
+        i.id !== id ? i : isLow ? { ...i, quantity: 0, uncertain: false } : { ...i, uncertain: false }
+      )
+    );
+  };
+
+  const cook = (recipe: Recipe) => {
+    setItems((prev) =>
+      prev.map((item) => {
+        const used = recipe.ingredients
+          .filter((ing) => ing.tracked && ing.itemId === item.id && ing.amount != null)
+          .reduce((sum, ing) => sum + ((ing.amount ?? 0) * portions) / recipe.basePortions, 0);
+        if (used <= 0) return item;
+        const quantity = Math.max(0, Math.round((item.quantity - used) * 1000) / 1000);
+        return { ...item, quantity, uncertain: quantity <= item.minQuantity ? true : item.uncertain };
+      })
     );
   };
 
   const toggleShoppingList = (id: string) => {
+    const item = items.find((i) => i.id === id);
+    if (!item) return;
     setShoppingList((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) {
-        next.delete(id);
-      } else {
-        next.add(id);
+      if (prev.some((e) => e.itemId === id)) return prev.filter((e) => e.itemId !== id);
+      return [...prev, { itemId: id, name: item.name, amount: item.packageSize, unit: item.unit }];
+    });
+  };
+
+  const removeFromShoppingList = (id: string) => {
+    setShoppingList((prev) => prev.filter((e) => e.itemId !== id));
+  };
+
+  const addMissing = (recipe: Recipe) => {
+    setShoppingList((prev) => {
+      let next = [...prev];
+      for (const ing of recipe.ingredients) {
+        if (!ing.tracked || !ing.itemId || ing.amount == null) continue;
+        const item = items.find((i) => i.id === ing.itemId);
+        if (!item) continue;
+        const required = (ing.amount * portions) / recipe.basePortions;
+        const missing = required - item.quantity;
+        if (missing <= 1e-9) continue;
+        const packs = Math.ceil(missing / item.packageSize - 1e-9);
+        const add = Math.round(packs * item.packageSize * 1000) / 1000;
+        const existing = next.find((e) => e.itemId === item.id);
+        if (existing) {
+          next = next.map((e) =>
+            e.itemId === item.id ? { ...e, amount: Math.round((e.amount + add) * 1000) / 1000 } : e
+          );
+        } else {
+          next.push({ itemId: item.id, name: item.name, amount: add, unit: item.unit });
+        }
       }
       return next;
     });
@@ -62,6 +116,46 @@ export default function App() {
     );
   };
 
+  const importRecipeToState = (recipe: Recipe) => {
+    setRecipes((prev) => [...prev, recipe]);
+  };
+
+  const matchRecipeIngredient = (recipeId: string, ingredientId: string, itemName: string) => {
+    const item = items.find((i) => i.name.toLowerCase() === itemName.toLowerCase());
+    if (!item) return;
+    setRecipes((prev) =>
+      prev.map((r) =>
+        r.id !== recipeId
+          ? r
+          : {
+              ...r,
+              ingredients: r.ingredients.map((ing) =>
+                ing.id === ingredientId
+                  ? { ...ing, itemId: item.id, amount: ing.amount ?? item.packageSize, suggestion: undefined }
+                  : ing
+              ),
+            }
+          )
+      );
+  };
+
+  const markUntracked = (recipeId: string, ingredientId: string) => {
+    setRecipes((prev) =>
+      prev.map((r) =>
+        r.id !== recipeId
+          ? r
+          : {
+              ...r,
+              ingredients: r.ingredients.map((ing) =>
+                ing.id === ingredientId ? { ...ing, tracked: false, suggestion: undefined } : ing
+              ),
+            }
+          )
+      );
+  };
+
+  const toggleTheme = () => setTheme(theme === "dark" ? "light" : "dark");
+
   return (
     <>
       {tab === "home" && (
@@ -69,24 +163,35 @@ export default function App() {
           items={items}
           shoppingList={shoppingList}
           onToggleShoppingList={toggleShoppingList}
+          onRemoveFromShoppingList={removeFromShoppingList}
+          onConfirmLow={confirmLow}
           theme={theme}
-          onToggleTheme={() => setTheme(theme === "dark" ? "light" : "dark")}
+          onToggleTheme={toggleTheme}
         />
       )}
       {tab === "inventory" && (
         <InventoryScreen
           items={items}
-          onConsume={consume}
-          theme={theme}
-          onToggleTheme={() => setTheme(theme === "dark" ? "light" : "dark")}
-        />
-      )}
-      {tab === "receipts" && (
-        <ReceiptsScreen
           receipts={receipts}
+          onConsume={consume}
           onMatchItem={matchReceiptItem}
           theme={theme}
-          onToggleTheme={() => setTheme(theme === "dark" ? "light" : "dark")}
+          onToggleTheme={toggleTheme}
+        />
+      )}
+      {tab === "recipes" && (
+        <RecipesScreen
+          recipes={recipes}
+          items={items}
+          portions={portions}
+          onPortionsChange={setPortions}
+          onImport={importRecipeToState}
+          onCook={cook}
+          onAddMissing={addMissing}
+          onMatchIngredient={matchRecipeIngredient}
+          onMarkUntracked={markUntracked}
+          theme={theme}
+          onToggleTheme={toggleTheme}
         />
       )}
       <TabBar active={tab} onChange={setTab} />
