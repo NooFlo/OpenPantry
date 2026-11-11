@@ -64,6 +64,11 @@ CREATE TABLE IF NOT EXISTS shopping_list (
     amount REAL NOT NULL,
     unit TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS settings (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
 """
 
 

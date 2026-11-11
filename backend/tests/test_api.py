@@ -1,3 +1,4 @@
+import json
 import os
 import sys
 import tempfile
@@ -165,3 +166,37 @@ def test_health(client):
     response = client.get("/api/health")
     assert response.status_code == 200
     assert response.json()["ok"] is True
+
+
+def test_settings_defaults_and_update(client):
+    settings = client.get("/api/settings").json()
+    assert settings["receiptsModel"]["provider"] == "local"
+    assert settings["recipesModel"]["provider"] == "local"
+    assert settings["cloudKeySet"] is False
+    assert "api_key" not in str(settings).lower() or settings.get("cloudApiKey") is None
+
+    response = client.put("/api/settings", json={
+        "recipes_model": {"provider": "cloud", "model": "mistral-small-latest"},
+        "cloud_api_key": "secret-key-123",
+    })
+    assert response.status_code == 200
+    updated = response.json()
+    assert updated["recipesModel"] == {"provider": "cloud", "model": "mistral-small-latest"}
+    assert updated["cloudKeySet"] is True
+    assert "secret-key-123" not in json.dumps(updated)
+
+    persisted = client.get("/api/settings").json()
+    assert persisted["recipesModel"]["provider"] == "cloud"
+    assert persisted["cloudKeySet"] is True
+
+
+def test_settings_invalid_choice_rejected(client):
+    response = client.put("/api/settings", json={"receipts_model": {"provider": "magic", "model": "x"}})
+    assert response.status_code == 400
+
+
+def test_models_endpoint(client):
+    response = client.get("/api/models")
+    assert response.status_code == 200
+    assert "local" in response.json()
+    assert "llmAvailable" in response.json()

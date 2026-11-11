@@ -10,6 +10,7 @@ Self-hosted home food and consumables inventory. Runs on a Rock 5A (16 GB) on th
 - **Recipes:** paste a link or recipe text; a standardized format stores ingredients per base portions. The list highlights recipes that can be made with current stock (orange) vs. greyed-out ones showing how many portions are possible; missing ingredients can be added to the shopping list, scaled by the selected portions and rounded up to package sizes.
 - **Cooking:** "Cooked this" deducts used ingredients; items that fall low afterwards appear on Home as "might be running low" (a weak signal the user confirms with Yes/No, overridden by any barcode scan).
 - **Shopping list:** merged per product, package-size aware; later pushed to Home Assistant.
+- **Model settings:** the receipts and recipes areas each let you pick which model runs the extraction — any installed Ollama model, or a cloud model via an OpenAI-compatible API (base URL, model, API key; defaults to Mistral's API). The key is stored server-side and never returned by the API.
 
 The LLM only proposes; deterministic code validates and commits. The SQLite database is the single source of truth.
 

@@ -8,6 +8,21 @@ def new_id() -> str:
     return uuid.uuid4().hex[:12]
 
 
+def get_setting(key: str, default: str | None = None) -> str | None:
+    with get_db() as db:
+        row = db.execute("SELECT value FROM settings WHERE key = ?", (key,)).fetchone()
+    return row["value"] if row else default
+
+
+def set_setting(key: str, value: str):
+    with get_db() as db:
+        db.execute(
+            "INSERT INTO settings (key, value) VALUES (?, ?)"
+            " ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            (key, value),
+        )
+
+
 def list_items() -> list[dict]:
     with get_db() as db:
         rows = db.execute("SELECT * FROM items ORDER BY name").fetchall()

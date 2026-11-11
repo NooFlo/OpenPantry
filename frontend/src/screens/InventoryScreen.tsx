@@ -1,8 +1,9 @@
 import { useMemo, useState } from "react";
-import type { Item, Receipt, Unit } from "../types";
-import { IconBarcode, IconMinus, IconSearch } from "../components/Icons";
+import type { Item, ModelList, Receipt, Settings, SettingsPatch, Unit } from "../types";
+import { IconBarcode, IconGear, IconMinus, IconSearch } from "../components/Icons";
 import Sheet from "../components/Sheet";
 import ThemeToggle from "../components/ThemeToggle";
+import ModelSettingsSheet from "../components/ModelSettingsSheet";
 import ReceiptsView from "./ReceiptsView";
 
 interface InventoryScreenProps {
@@ -10,6 +11,9 @@ interface InventoryScreenProps {
   receipts: Receipt[];
   onConsume: (id: string, amount: number) => void;
   onMatchItem: (receiptId: string, itemId: string, productName: string) => void;
+  settings: Settings;
+  models: ModelList;
+  onSaveSettings: (patch: SettingsPatch) => void;
   theme: "light" | "dark";
   onToggleTheme: () => void;
 }
@@ -18,11 +22,12 @@ function formatQty(qty: number, unit: Unit) {
   return `${qty} ${unit}`;
 }
 
-export default function InventoryScreen({ items, receipts, onConsume, onMatchItem, theme, onToggleTheme }: InventoryScreenProps) {
+export default function InventoryScreen({ items, receipts, onConsume, onMatchItem, settings, models, onSaveSettings, theme, onToggleTheme }: InventoryScreenProps) {
   const [view, setView] = useState<"items" | "receipts">("items");
   const [query, setQuery] = useState("");
   const [category, setCategory] = useState<string | null>(null);
   const [selected, setSelected] = useState<Item | null>(null);
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
   const categories = useMemo(() => [...new Set(items.map((i) => i.category))], [items]);
 
@@ -37,7 +42,14 @@ export default function InventoryScreen({ items, receipts, onConsume, onMatchIte
     <div className="screen">
       <header className="screen-header">
         <h1 className="screen-title">{view === "items" ? "Inventory" : "Receipts"}</h1>
-        <ThemeToggle theme={theme} onToggle={onToggleTheme} />
+        <div className="header-actions">
+          {view === "receipts" && (
+            <button className="icon-btn" onClick={() => setSettingsOpen(true)} aria-label="Model settings">
+              <IconGear size={19} />
+            </button>
+          )}
+          <ThemeToggle theme={theme} onToggle={onToggleTheme} />
+        </div>
       </header>
 
       <div className="segmented">
@@ -125,6 +137,17 @@ export default function InventoryScreen({ items, receipts, onConsume, onMatchIte
             </Sheet>
           )}
         </>
+      )}
+
+      {settingsOpen && (
+        <ModelSettingsSheet
+          task="receipts"
+          settings={settings}
+          localModels={models.local}
+          llmAvailable={models.llmAvailable}
+          onSave={onSaveSettings}
+          onClose={() => setSettingsOpen(false)}
+        />
       )}
     </div>
   );

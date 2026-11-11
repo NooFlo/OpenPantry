@@ -10,6 +10,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from . import extract, mail, repo, seed
+from .config import get_cloud_config, get_model_choice, set_model_choice
 from .db import init_db
 
 logging.basicConfig(level=logging.INFO)
@@ -76,6 +77,56 @@ class IngredientMatchRequest(BaseModel):
     item_name: str
 
 
+class ModelChoiceRequest(BaseModel):
+    provider: str
+    model: str
+
+
+class SettingsRequest(BaseModel):
+    receipts_model: dict | None = None
+    recipes_model: dict | None = None
+    cloud_base_url: str | None = None
+    cloud_model: str | None = None
+    cloud_api_key: str | None = None
+
+
+def _settings_payload() -> dict:
+    cloud = get_cloud_config()
+    return {
+        "receiptsModel": get_model_choice("receipts"),
+        "recipesModel": get_model_choice("recipes"),
+        "cloudBaseUrl": cloud["base_url"],
+        "cloudModel": cloud["model"],
+        "cloudKeySet": bool(cloud["api_key"]),
+    }
+
+
+@app.get("/api/settings")
+def get_settings():
+    return _settings_payload()
+
+
+@app.put("/api/settings")
+def update_settings(body: SettingsRequest):
+    for task, choice in (("receipts", body.receipts_model), ("recipes", body.recipes_model)):
+        if choice:
+            if choice.get("provider") not in ("local", "cloud") or not choice.get("model"):
+                raise HTTPException(400, f"invalid model choice for {task}")
+            set_model_choice(task, choice)
+    if body.cloud_base_url is not None:
+        repo.set_setting("cloud_base_url", body.cloud_base_url.strip())
+    if body.cloud_model is not None:
+        repo.set_setting("cloud_model", body.cloud_model.strip())
+    if body.cloud_api_key is not None:
+        repo.set_setting("cloud_api_key", body.cloud_api_key.strip())
+    return _settings_payload()
+
+
+@app.get("/api/models")
+def get_models():
+    return {"local": extract.llm.local_models(), "llmAvailable": extract.llm.available()}
+
+
 @app.get("/api/items")
 def get_items():
     return camelize(repo.list_items())
@@ -127,11 +178,13 @@ def get_recipes():
 
 @app.post("/api/recipes/import")
 def import_recipe(body: ImportRequest):
+    choice = get_model_choice("recipes")
+    cloud = get_cloud_config()
     try:
         if body.kind == "link":
-            data = extract.import_recipe_from_url(body.value)
+            data = extract.import_recipe_from_url(body.value, choice, cloud)
         elif body.kind == "text":
-            data = extract.import_recipe_from_text(body.value)
+            data = extract.import_recipe_from_text(body.value, "pasted", choice, cloud)
         else:
             raise HTTPException(400, "kind must be 'link' or 'text'")
     except httpx.HTTPError:
