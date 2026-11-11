@@ -1,66 +1,76 @@
-import type { Item, Receipt, Recipe } from "./types";
-import { mockItems, mockReceipts, mockRecipes } from "./data/mock";
+import type { Item, Receipt, Recipe, ShoppingListEntry } from "./types";
 
-const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+const BASE = "/api";
 
-export async function fetchItems(): Promise<Item[]> {
-  await delay(150);
-  return mockItems;
+async function request<T>(path: string, options?: RequestInit): Promise<T> {
+  const response = await fetch(BASE + path, {
+    headers: { "Content-Type": "application/json" },
+    ...options,
+  });
+  if (!response.ok) throw new Error(`${options?.method ?? "GET"} ${path} -> ${response.status}`);
+  return response.json();
 }
 
-export async function fetchReceipts(): Promise<Receipt[]> {
-  await delay(150);
-  return mockReceipts;
+export function fetchItems(): Promise<Item[]> {
+  return request<Item[]>("/items");
 }
 
-export async function fetchRecipes(): Promise<Recipe[]> {
-  await delay(150);
-  return mockRecipes;
+export function fetchReceipts(): Promise<Receipt[]> {
+  return request<Receipt[]>("/receipts");
 }
 
-export async function importRecipe(kind: "link" | "text", value: string): Promise<Recipe> {
-  await delay(600);
-  return {
-    id: `imported-${Date.now()}`,
-    title: "Ofengemüse mit Feta",
-    source: kind === "link" ? value : "pasted",
-    basePortions: 2,
-    ingredients: [
-      { id: "i1", raw: "500 g Kartoffeln", amount: 0.5, tracked: true },
-      { id: "i2", raw: "3 EL Olivenöl", amount: 0.045, itemId: "olivenoel", tracked: true, suggestion: "Olivenöl" },
-      { id: "i3", raw: "1 TL Salz", amount: 0.01, tracked: true, suggestion: "Salz" },
-      { id: "i4", raw: "200 g Feta", amount: 0.2, tracked: true },
-      { id: "i5", raw: "1 TL getrockneter Oregano", tracked: false },
-    ],
-    steps: [
-      "Cut the vegetables into bite-sized pieces.",
-      "Toss with olive oil, salt and oregano on a tray.",
-      "Roast at 200 °C for 30 minutes, then add feta for 10 more.",
-    ],
-  };
+export function fetchRecipes(): Promise<Recipe[]> {
+  return request<Recipe[]>("/recipes");
 }
 
-export async function consumeItem(itemId: string, amount: number): Promise<void> {
-  await delay(200);
-  console.info(`consume ${amount} of ${itemId}`);
+export function importRecipe(kind: "link" | "text", value: string): Promise<Recipe> {
+  return request<Recipe>("/recipes/import", { method: "POST", body: JSON.stringify({ kind, value }) });
 }
 
-export async function cookRecipe(recipeId: string): Promise<void> {
-  await delay(150);
-  console.info(`cooked ${recipeId}, deducting ingredients`);
+export function consumeItem(itemId: string, amount: number): Promise<Item> {
+  return request<Item>(`/items/${itemId}/consume`, { method: "POST", body: JSON.stringify({ amount }) });
 }
 
-export async function addToShoppingList(itemId: string, amount: number): Promise<void> {
-  await delay(150);
-  console.info(`add ${amount} of ${itemId} to shopping list`);
+export function confirmLow(itemId: string, isLow: boolean): Promise<Item> {
+  return request<Item>(`/items/${itemId}/confirm-low`, { method: "POST", body: JSON.stringify({ is_low: isLow }) });
 }
 
-export async function removeFromShoppingList(itemId: string): Promise<void> {
-  await delay(150);
-  console.info(`remove ${itemId} from shopping list`);
+export function cookRecipe(recipeId: string, portions: number): Promise<Item[]> {
+  return request<Item[]>(`/recipes/${recipeId}/cook`, { method: "POST", body: JSON.stringify({ portions }) });
 }
 
-export async function matchReceiptItem(receiptId: string, itemId: string, productName: string): Promise<void> {
-  await delay(200);
-  console.info(`match ${receiptId}/${itemId} to ${productName}`);
+export function addMissingToShoppingList(recipeId: string, portions: number): Promise<ShoppingListEntry[]> {
+  return request<ShoppingListEntry[]>(`/recipes/${recipeId}/add-missing`, {
+    method: "POST",
+    body: JSON.stringify({ portions }),
+  });
+}
+
+export function addToShoppingList(itemId: string, amount: number): Promise<ShoppingListEntry[]> {
+  return request<ShoppingListEntry[]>(`/shopping-list/${itemId}`, {
+    method: "POST",
+    body: JSON.stringify({ amount }),
+  });
+}
+
+export function removeFromShoppingList(itemId: string): Promise<ShoppingListEntry[]> {
+  return request<ShoppingListEntry[]>(`/shopping-list/${itemId}`, { method: "DELETE" });
+}
+
+export function matchReceiptItem(receiptId: string, itemId: string, productName: string): Promise<Receipt> {
+  return request<Receipt>(`/receipts/${receiptId}/items/${itemId}/match`, {
+    method: "POST",
+    body: JSON.stringify({ product_name: productName }),
+  });
+}
+
+export function matchRecipeIngredient(recipeId: string, ingredientId: string, itemName: string): Promise<Recipe> {
+  return request<Recipe>(`/recipes/${recipeId}/ingredients/${ingredientId}/match`, {
+    method: "POST",
+    body: JSON.stringify({ item_name: itemName }),
+  });
+}
+
+export function markUntracked(recipeId: string, ingredientId: string): Promise<Recipe> {
+  return request<Recipe>(`/recipes/${recipeId}/ingredients/${ingredientId}/untrack`, { method: "POST" });
 }

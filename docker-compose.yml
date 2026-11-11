@@ -1,0 +1,28 @@
+services:
+  openpantry:
+    build: .
+    ports:
+      - "8321:8321"
+    volumes:
+      - pantry-data:/data
+    environment:
+      - OLLAMA_URL=http://ollama:11434
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-qwen2.5:3b-instruct}
+      - IMAP_HOST=${IMAP_HOST:-}
+      - IMAP_USER=${IMAP_USER:-}
+      - IMAP_PASSWORD=${IMAP_PASSWORD:-}
+      - IMAP_FOLDER=${IMAP_FOLDER:-INBOX}
+      - IMAP_POLL_SECONDS=${IMAP_POLL_SECONDS:-60}
+    depends_on:
+      - ollama
+    restart: unless-stopped
+
+  ollama:
+    image: ollama/ollama:latest
+    volumes:
+      - ollama-models:/root/.ollama
+    restart: unless-stopped
+
+volumes:
+  pantry-data:
+  ollama-models:

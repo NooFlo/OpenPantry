@@ -1,6 +1,18 @@
 import { useEffect, useState } from "react";
 import type { Item, Recipe, Receipt, ShoppingListEntry, Tab } from "./types";
-import { fetchItems, fetchReceipts, fetchRecipes } from "./api";
+import {
+  addMissingToShoppingList,
+  addToShoppingList,
+  confirmLow,
+  consumeItem,
+  cookRecipe,
+  fetchItems,
+  fetchReceipts,
+  fetchRecipes,
+  matchRecipeIngredient,
+  markUntracked,
+  removeFromShoppingList,
+} from "./api";
 import TabBar from "./components/TabBar";
 import HomeScreen from "./screens/HomeScreen";
 import InventoryScreen from "./screens/InventoryScreen";
@@ -42,14 +54,16 @@ export default function App() {
           : i
       )
     );
+    consumeItem(id, amount).catch(console.error);
   };
 
-  const confirmLow = (id: string, isLow: boolean) => {
+  const confirmRunningLow = (id: string, isLow: boolean) => {
     setItems((prev) =>
       prev.map((i) =>
         i.id !== id ? i : isLow ? { ...i, quantity: 0, uncertain: false } : { ...i, uncertain: false }
       )
     );
+    confirmLow(id, isLow).catch(console.error);
   };
 
   const cook = (recipe: Recipe) => {
@@ -63,44 +77,24 @@ export default function App() {
         return { ...item, quantity, uncertain: quantity <= item.minQuantity ? true : item.uncertain };
       })
     );
+    cookRecipe(recipe.id, portions).catch(console.error);
   };
 
   const toggleShoppingList = (id: string) => {
     const item = items.find((i) => i.id === id);
     if (!item) return;
-    setShoppingList((prev) => {
-      if (prev.some((e) => e.itemId === id)) return prev.filter((e) => e.itemId !== id);
-      return [...prev, { itemId: id, name: item.name, amount: item.packageSize, unit: item.unit }];
-    });
+    const call = shoppingList.some((e) => e.itemId === id)
+      ? removeFromShoppingList(id)
+      : addToShoppingList(id, item.packageSize);
+    call.then(setShoppingList).catch(console.error);
   };
 
-  const removeFromShoppingList = (id: string) => {
-    setShoppingList((prev) => prev.filter((e) => e.itemId !== id));
+  const removeShoppingListEntry = (id: string) => {
+    removeFromShoppingList(id).then(setShoppingList).catch(console.error);
   };
 
   const addMissing = (recipe: Recipe) => {
-    setShoppingList((prev) => {
-      let next = [...prev];
-      for (const ing of recipe.ingredients) {
-        if (!ing.tracked || !ing.itemId || ing.amount == null) continue;
-        const item = items.find((i) => i.id === ing.itemId);
-        if (!item) continue;
-        const required = (ing.amount * portions) / recipe.basePortions;
-        const missing = required - item.quantity;
-        if (missing <= 1e-9) continue;
-        const packs = Math.ceil(missing / item.packageSize - 1e-9);
-        const add = Math.round(packs * item.packageSize * 1000) / 1000;
-        const existing = next.find((e) => e.itemId === item.id);
-        if (existing) {
-          next = next.map((e) =>
-            e.itemId === item.id ? { ...e, amount: Math.round((e.amount + add) * 1000) / 1000 } : e
-          );
-        } else {
-          next.push({ itemId: item.id, name: item.name, amount: add, unit: item.unit });
-        }
-      }
-      return next;
-    });
+    addMissingToShoppingList(recipe.id, portions).then(setShoppingList).catch(console.error);
   };
 
   const matchReceiptItem = (receiptId: string, itemId: string, productName: string) => {
@@ -120,38 +114,20 @@ export default function App() {
     setRecipes((prev) => [...prev, recipe]);
   };
 
-  const matchRecipeIngredient = (recipeId: string, ingredientId: string, itemName: string) => {
-    const item = items.find((i) => i.name.toLowerCase() === itemName.toLowerCase());
-    if (!item) return;
-    setRecipes((prev) =>
-      prev.map((r) =>
-        r.id !== recipeId
-          ? r
-          : {
-              ...r,
-              ingredients: r.ingredients.map((ing) =>
-                ing.id === ingredientId
-                  ? { ...ing, itemId: item.id, amount: ing.amount ?? item.packageSize, suggestion: undefined }
-                  : ing
-              ),
-            }
-          )
-      );
+  const matchIngredient = (recipeId: string, ingredientId: string, itemName: string) => {
+    matchRecipeIngredient(recipeId, ingredientId, itemName)
+      .then((updated) => {
+        setRecipes((prev) => prev.map((r) => (r.id === updated.id ? updated : r)));
+      })
+      .catch(console.error);
   };
 
-  const markUntracked = (recipeId: string, ingredientId: string) => {
-    setRecipes((prev) =>
-      prev.map((r) =>
-        r.id !== recipeId
-          ? r
-          : {
-              ...r,
-              ingredients: r.ingredients.map((ing) =>
-                ing.id === ingredientId ? { ...ing, tracked: false, suggestion: undefined } : ing
-              ),
-            }
-          )
-      );
+  const untrackIngredient = (recipeId: string, ingredientId: string) => {
+    markUntracked(recipeId, ingredientId)
+      .then((updated) => {
+        setRecipes((prev) => prev.map((r) => (r.id === updated.id ? updated : r)));
+      })
+      .catch(console.error);
   };
 
   const toggleTheme = () => setTheme(theme === "dark" ? "light" : "dark");
@@ -163,8 +139,8 @@ export default function App() {
           items={items}
           shoppingList={shoppingList}
           onToggleShoppingList={toggleShoppingList}
-          onRemoveFromShoppingList={removeFromShoppingList}
-          onConfirmLow={confirmLow}
+          onRemoveFromShoppingList={removeShoppingListEntry}
+          onConfirmLow={confirmRunningLow}
           theme={theme}
           onToggleTheme={toggleTheme}
         />
@@ -188,8 +164,8 @@ export default function App() {
           onImport={importRecipeToState}
           onCook={cook}
           onAddMissing={addMissing}
-          onMatchIngredient={matchRecipeIngredient}
-          onMarkUntracked={markUntracked}
+          onMatchIngredient={matchIngredient}
+          onMarkUntracked={untrackIngredient}
           theme={theme}
           onToggleTheme={toggleTheme}
         />
