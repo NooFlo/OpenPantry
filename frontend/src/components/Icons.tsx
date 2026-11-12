@@ -95,6 +95,14 @@ export function IconCheck(props: IconProps) {
   );
 }
 
+export function IconChevron(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <path d="m6 9 6 6 6-6" />
+    </Svg>
+  );
+}
+
 export function IconCopy(props: IconProps) {
   return (
     <Svg {...props}>

@@ -1,0 +1,217 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>OpenPantry — Receipts page sample</title>
+<style>
+  :root {
+    --bg: #ffffff;
+    --surface: #f7f6f4;
+    --surface-2: #efeeec;
+    --border: #e6e4e0;
+    --text: #1e1d1b;
+    --text-2: #6e6b65;
+    --text-3: #9b988f;
+    --accent: #fa500f;
+    --accent-hover: #e04808;
+    --accent-soft: rgba(250, 80, 15, 0.1);
+    --ok: #3d8b40;
+    --ok-soft: rgba(61, 139, 64, 0.12);
+  }
+  :root[data-theme="dark"] {
+    --bg: #0f0f0e;
+    --surface: #171614;
+    --surface-2: #201f1d;
+    --border: #2b2a27;
+    --text: #f5f4f2;
+    --text-2: #a3a09a;
+    --text-3: #6e6b65;
+    --accent: #ff7000;
+    --accent-hover: #ff8a33;
+    --accent-soft: rgba(255, 112, 0, 0.14);
+    --ok: #6cbf6f;
+    --ok-soft: rgba(108, 191, 111, 0.14);
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 24px 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    -webkit-font-smoothing: antialiased;
+  }
+  .phone { max-width: 480px; margin: 0 auto; padding: 0 20px 40px; }
+  .toolbar {
+    max-width: 480px; margin: 0 auto 16px; padding: 0 20px;
+    display: flex; align-items: center; justify-content: space-between;
+  }
+  .sample-note { font-size: 12px; color: var(--text-3); }
+  button {
+    font-family: inherit; border: none; cursor: pointer;
+    background: none; color: inherit; padding: 0;
+  }
+  .theme-btn {
+    font-size: 12.5px; font-weight: 600; color: var(--text-2);
+    border: 1px solid var(--border); border-radius: 999px; padding: 6px 12px;
+  }
+  .screen-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px; }
+  .screen-title { font-size: 26px; font-weight: 700; letter-spacing: -0.02em; margin: 0; }
+  .segmented {
+    display: flex; background: var(--surface); border: 1px solid var(--border);
+    border-radius: 12px; padding: 3px; margin-bottom: 16px;
+  }
+  .segmented button {
+    flex: 1; padding: 8px 0; border-radius: 9px; font-size: 13.5px;
+    font-weight: 600; color: var(--text-2);
+  }
+  .segmented button.active { background: var(--bg); color: var(--text); box-shadow: 0 1px 3px rgba(0,0,0,0.12); }
+  .section-title {
+    font-size: 13px; font-weight: 600; text-transform: uppercase;
+    letter-spacing: 0.08em; color: var(--text-2); margin: 24px 0 10px;
+  }
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 16px; padding: 14px 16px; }
+  .icon-btn {
+    width: 38px; height: 38px; display: grid; place-items: center;
+    border-radius: 12px; color: var(--text-2);
+  }
+  .icon-btn:hover { background: var(--surface-2); color: var(--text); }
+  .item-name { font-size: 15px; font-weight: 600; }
+  .forward-card { display: flex; align-items: center; gap: 14px; }
+  .forward-icon {
+    width: 38px; height: 38px; display: grid; place-items: center;
+    border-radius: 12px; background: var(--accent-soft); color: var(--accent); flex-shrink: 0;
+  }
+  .forward-card .info { flex: 1; min-width: 0; }
+  .forward-address {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 13.5px; color: var(--accent); margin-top: 3px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .forward-hint { font-size: 12.5px; color: var(--text-2); margin-top: 3px; }
+  .receipt-card { padding: 0; overflow: hidden; margin-bottom: 10px; }
+  .receipt-head {
+    width: 100%; display: flex; align-items: center; gap: 14px;
+    text-align: left; padding: 14px 16px;
+  }
+  .receipt-head .info { flex: 1; min-width: 0; }
+  .receipt-head .store { font-size: 15px; font-weight: 600; }
+  .receipt-head .meta { font-size: 12.5px; color: var(--text-2); margin-top: 3px; }
+  .receipt-head .total { font-size: 14px; font-weight: 600; color: var(--text-2); }
+  .receipt-head .chevron { color: var(--text-3); flex-shrink: 0; transition: transform 160ms ease; }
+  .receipt-head .chevron.open { transform: rotate(180deg); }
+  .status-chip {
+    font-size: 11px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: 0.06em; padding: 4px 9px; border-radius: 999px; white-space: nowrap;
+  }
+  .status-chip.done { background: var(--ok-soft); color: var(--ok); }
+  .status-chip.review { background: var(--accent-soft); color: var(--accent); }
+  .status-chip.processing { background: var(--surface-2); color: var(--text-2); }
+  .review-items { border-top: 1px solid var(--border); padding: 6px 16px 12px; }
+  .review-item { display: flex; align-items: center; gap: 12px; padding: 10px 0; }
+  .review-item + .review-item { border-top: 1px solid var(--border); }
+  .review-item .raw { flex: 1; min-width: 0; font-size: 13.5px; }
+  .review-item .raw .qty { color: var(--text-2); font-weight: 400; }
+  .suggestion {
+    display: inline-flex; align-items: center; gap: 8px;
+    font-size: 13px; font-weight: 600; color: var(--accent);
+    background: var(--accent-soft); border-radius: 999px; padding: 6px 7px 6px 12px;
+  }
+  .suggestion button {
+    display: grid; place-items: center; width: 22px; height: 22px;
+    border-radius: 999px; background: var(--accent); color: #fff;
+  }
+  .btn {
+    display: inline-flex; align-items: center; justify-content: center; gap: 7px;
+    font-size: 14px; font-weight: 600; border-radius: 12px; padding: 10px 16px;
+  }
+  .btn-ghost { background: transparent; border: 1px solid var(--border); color: var(--text-2); }
+  .match-btn { padding: 6px 12px; font-size: 12.5px; }
+  svg { display: block; }
+</style>
+</head>
+<body>
+  <div class="toolbar">
+    <span class="sample-note">Static sample · demo data</span>
+    <button class="theme-btn" onclick="const r=document.documentElement;r.dataset.theme=r.dataset.theme==='dark'?'light':'dark'">Toggle theme</button>
+  </div>
+
+  <div class="phone">
+    <header class="screen-header">
+      <h1 class="screen-title">Receipts</h1>
+    </header>
+
+    <div class="segmented">
+      <button>Items</button>
+      <button class="active">Receipts</button>
+    </div>
+
+    <div class="card forward-card">
+      <div class="forward-icon">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h12v18l-2-1.5L14 21l-2-1.5L10 21l-2-1.5L6 21V3Z"/><path d="M9.5 8h5"/><path d="M9.5 12h5"/></svg>
+      </div>
+      <div class="info">
+        <div class="item-name">Forward receipts by mail</div>
+        <div class="forward-address">receipts@pantry.local</div>
+        <div class="forward-hint">Parsed line items land here for review.</div>
+      </div>
+      <button class="icon-btn" aria-label="Copy address">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a1 1 0 0 1 1-1h10"/></svg>
+      </button>
+    </div>
+
+    <h2 class="section-title">Recent</h2>
+
+    <div class="card receipt-card">
+      <button class="receipt-head">
+        <div class="info">
+          <div class="store">REWE</div>
+          <div class="meta">2025-06-14 · 7 items · 2 to match</div>
+        </div>
+        <span class="receipt-head total">23.87 €</span>
+        <span class="status-chip review">review</span>
+        <svg class="chevron open" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>
+      </button>
+      <div class="review-items">
+        <div class="review-item">
+          <div class="raw">Jodarmes Salz 500g <span class="qty">×1</span></div>
+          <span class="suggestion">
+            Salz
+            <button aria-label="Accept Salz"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m4.5 12.5 5 5 10-11"/></svg></button>
+          </span>
+        </div>
+        <div class="review-item">
+          <div class="raw">Vollmilch 3,8% 1L <span class="qty">×2</span></div>
+          <button class="btn btn-ghost match-btn">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6v12M7.5 6v12M11 6v9M14.5 6v12M18 6v12M20.5 6v9"/></svg>
+            Match
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <div class="card receipt-card">
+      <button class="receipt-head">
+        <div class="info">
+          <div class="store">Aldi Süd</div>
+          <div class="meta">2025-06-11 · 12 items</div>
+        </div>
+        <span class="receipt-head total">41.12 €</span>
+        <span class="status-chip done">done</span>
+      </button>
+    </div>
+
+    <div class="card receipt-card">
+      <button class="receipt-head">
+        <div class="info">
+          <div class="store">dm</div>
+          <div class="meta">2025-06-10 · 5 items</div>
+        </div>
+        <span class="receipt-head total">18.45 €</span>
+        <span class="status-chip processing">processing</span>
+      </button>
+    </div>
+  </div>
+</body>
+</html>
