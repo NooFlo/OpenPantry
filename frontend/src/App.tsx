@@ -12,6 +12,7 @@ import {
   fetchRecipes,
   fetchSettings,
   matchRecipeIngredient,
+  matchReceiptItem as matchReceiptItemApi,
   markUntracked,
   removeFromShoppingList,
   updateSettings,
@@ -117,16 +118,13 @@ export default function App() {
   };
 
   const matchReceiptItem = (receiptId: string, itemId: string, productName: string) => {
-    setReceipts((prev) =>
-      prev.map((r) =>
-        r.id !== receiptId
-          ? r
-          : {
-              ...r,
-              items: r.items.map((i) => (i.id === itemId ? { ...i, suggestion: productName, status: "matched" } : i)),
-            }
-      )
-    );
+    matchReceiptItemApi(receiptId, itemId, productName)
+      .then((updated) => {
+        setReceipts((prev) => prev.map((r) => (r.id === updated.id ? updated : r)));
+        return fetchItems();
+      })
+      .then(setItems)
+      .catch(console.error);
   };
 
   const importRecipeToState = (recipe: Recipe) => {
@@ -137,7 +135,9 @@ export default function App() {
     matchRecipeIngredient(recipeId, ingredientId, itemName)
       .then((updated) => {
         setRecipes((prev) => prev.map((r) => (r.id === updated.id ? updated : r)));
+        return fetchItems();
       })
+      .then(setItems)
       .catch(console.error);
   };
 

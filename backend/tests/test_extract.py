@@ -36,6 +36,44 @@ def test_parse_ingredient_line_pieces():
     assert parsed["unit"] == "pcs"
 
 
+def test_parse_ingredient_line_unicode_fraction():
+    parsed = parse_ingredient_line("1½ tsp ground cumin")
+    assert parsed["amount"] is None
+    assert parsed["name"] == "ground cumin"
+
+    parsed = parse_ingredient_line("½ tsp ground turmeric")
+    assert parsed["amount"] is None
+    assert parsed["name"] == "ground turmeric"
+
+
+def test_parse_ingredient_line_range():
+    parsed = parse_ingredient_line("1 - 2 tbsp caster sugar")
+    assert parsed["amount"] is None
+    assert parsed["name"] == "caster sugar"
+
+
+def test_parse_ingredient_line_leading_parenthetical():
+    parsed = parse_ingredient_line("250ml (1 cup) water")
+    assert parsed["amount"] == 0.25
+    assert parsed["unit"] == "l"
+    assert parsed["name"] == "water"
+
+
+def test_schema_org_howto_sections():
+    html = '''<html><head><script type="application/ld+json">
+    {"@type": "Recipe", "name": "X", "recipeYield": "2",
+     "recipeIngredient": ["100 g Reis"],
+     "recipeInstructions": [
+       {"@type": "HowToSection", "name": "Cook",
+        "itemListElement": [{"@type": "HowToStep", "text": "Boil water."},
+                            {"@type": "HowToStep", "text": "Add rice."}]}
+     ]}
+    </script></head></html>'''
+    recipe = extract_schema_org_recipe(html, "https://example.com/x")
+    assert recipe is not None
+    assert recipe["steps"] == ["Boil water.", "Add rice."]
+
+
 def test_heuristic_recipe_splits_ingredients_and_steps():
     text = """Pfannkuchen
 500 g Mehl

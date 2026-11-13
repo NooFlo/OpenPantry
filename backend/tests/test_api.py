@@ -162,6 +162,28 @@ def test_barcode_scan_consumes_package(client):
     assert response.status_code == 404
 
 
+def test_match_creates_item_with_ingredient_unit(client):
+    text = """Testkuchen
+300 g Dinkelmehl
+1 Prise Salz
+Alles vermischen."""
+    recipe = client.post("/api/recipes/import", json={"kind": "text", "value": text}).json()
+    mehl = next(i for i in recipe["ingredients"] if i["raw"] == "300 g Dinkelmehl")
+    assert mehl["suggestion"] == "Dinkelmehl"
+    response = client.post(
+        f"/api/recipes/{recipe['id']}/ingredients/{mehl['id']}/match",
+        json={"item_name": "Weizenmehl Type 405"},
+    )
+    assert response.status_code == 200
+    items = client.get("/api/items").json()
+    created = next(i for i in items if i["name"] == "Weizenmehl Type 405")
+    assert created["unit"] == "kg"
+    matched = response.json()
+    ing = next(i for i in matched["ingredients"] if i["id"] == mehl["id"])
+    assert ing["amount"] == 0.3
+    assert ing["itemId"] == created["id"]
+
+
 def test_health(client):
     response = client.get("/api/health")
     assert response.status_code == 200
