@@ -1,4 +1,4 @@
-import type { Item, Receipt, Recipe, ShoppingListEntry } from "./types";
+import type { Item, ModelList, Receipt, Recipe, Settings, SettingsPatch, ShoppingListEntry } from "./types";
 
 const BASE = "/api";
 
@@ -73,4 +73,22 @@ export function matchRecipeIngredient(recipeId: string, ingredientId: string, it
 
 export function markUntracked(recipeId: string, ingredientId: string): Promise<Recipe> {
   return request<Recipe>(`/recipes/${recipeId}/ingredients/${ingredientId}/untrack`, { method: "POST" });
+}
+
+export function fetchSettings(): Promise<Settings> {
+  return request<Settings>("/settings");
+}
+
+export function updateSettings(patch: SettingsPatch): Promise<Settings> {
+  const body: Record<string, unknown> = {};
+  if (patch.receiptsModel) body.receipts_model = patch.receiptsModel;
+  if (patch.recipesModel) body.recipes_model = patch.recipesModel;
+  if (patch.cloudBaseUrl !== undefined) body.cloud_base_url = patch.cloudBaseUrl;
+  if (patch.cloudModel !== undefined) body.cloud_model = patch.cloudModel;
+  if (patch.cloudApiKey !== undefined) body.cloud_api_key = patch.cloudApiKey;
+  return request<Settings>("/settings", { method: "PUT", body: JSON.stringify(body) });
+}
+
+export function fetchModels(): Promise<ModelList> {
+  return request<ModelList>("/models");
 }

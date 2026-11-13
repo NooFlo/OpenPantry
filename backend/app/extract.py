@@ -16,9 +16,21 @@ UNIT_ALIASES = {
 }
 
 INGREDIENT_RE = re.compile(
-    r"^\s*(\d+(?:[.,]\d+)?)\s*(g|gr|gramm|kg|kilogramm|ml|milliliter|l|liter|pcs?|pieces?|stk|stück|stueck|EL|TL|Prise|Zehe[n]?|Handvoll)?\s+(.+?)\s*$",
+    r"^\s*(\d+(?:[.,]\d+)?)(?:\s*(?:-|–|to)\s*(\d+(?:[.,]\d+)?))?\s*"
+    r"(g|gr|gramm|kg|kilogramm|ml|milliliter|l|liter|pcs?|pieces?|stk|stück|stueck|tsp|teaspoon|teaspoons|tbsp|tbs|tablespoons?|tablespoon|EL|TL|Prise|Zehe[n]?|Handvoll|pinch|handful|splash|clove[s]?|pod[s]?|sprig[s]?|stick[s]?|can[s]?|cup[s]?)?\s+"
+    r"(.+?)\s*$",
     re.IGNORECASE,
 )
+SPOON_UNITS = {"tsp", "teaspoon", "teaspoons", "tbsp", "tbs", "tablespoon", "tablespoons",
+               "el", "tl", "prise", "pinch", "handful", "splash", "sprig", "sprigs"}
+FRACTIONS = {"½": "0.5", "¼": "0.25", "¾": "0.75", "⅓": "0.33", "⅔": "0.67", "⅛": "0.125"}
+
+
+def _replace_fractions(line: str) -> str:
+    for frac, dec in FRACTIONS.items():
+        line = re.sub(r"(\d+)\s*" + frac, lambda m, d=dec: str(float(m.group(1)) + float(d)), line)
+        line = line.replace(frac, dec)
+    return line
 STEP_HINTS = re.compile(r"\b(minut|min\.|backen|braten|kochen|erhitzen|rühren|ruehren|geben|stir|bake|fry|boil|heat|mix|add|preheat|oven)\b", re.IGNORECASE)
 HEADER_RE = re.compile(r"^(zutaten|ingredients|servings|preparation|zubereitung)\b|^\W*for \d+ (portions|servings)", re.IGNORECASE)
 PORTIONS_RE = re.compile(r"(?:für|for)\s*(\d+)\s*(?:portionen|portions|servings)", re.IGNORECASE)
@@ -43,18 +55,23 @@ def to_base_unit(amount: float, unit: str | None) -> tuple[float, str] | None:
 
 
 def parse_ingredient_line(line: str) -> dict | None:
-    match = INGREDIENT_RE.match(line.strip())
+    line = _replace_fractions(line.strip())
+    match = INGREDIENT_RE.match(line)
     if not match:
         return None
-    raw_amount, raw_unit, name = match.groups()
+    raw_amount, _range_end, raw_unit, name = match.groups()
     amount = float(raw_amount.replace(",", "."))
+    name = re.sub(r"^\s*\([^)]*\)\s*", "", name).strip()
     converted = to_base_unit(amount, raw_unit)
     if converted:
         amount, unit = converted
-        return {"raw": line.strip(), "amount": round(amount, 4), "unit": unit, "name": name.strip()}
+        return {"raw": line, "amount": round(amount, 4), "unit": unit, "name": name}
     if raw_unit is None:
-        return {"raw": line.strip(), "amount": amount, "unit": "pcs", "name": name.strip()}
-    return {"raw": line.strip(), "amount": None, "unit": None, "name": name.strip()}
+        return {"raw": line, "amount": amount, "unit": "pcs", "name": name}
+    if raw_unit.lower() in SPOON_UNITS:
+        name = re.sub(r"^\s*(?:tsp|teaspoons?|tbs|tbsps?|tablespoons?|el|tl|prise|pinch|handful|splash|sprigs?)\s+", "", name, flags=re.IGNORECASE).strip()
+        return {"raw": line, "amount": None, "unit": None, "name": name}
+    return {"raw": line, "amount": None, "unit": None, "name": name}
 
 
 def heuristic_recipe(text: str, source: str = "pasted") -> dict:
@@ -129,6 +146,16 @@ def _schema_to_recipe(node: dict, url: str) -> dict:
         raw_steps = [raw_steps]
     for step in raw_steps:
         if isinstance(step, dict):
+            children = step.get("itemListElement")
+            if children:
+                for child in children:
+                    if isinstance(child, dict):
+                        text = child.get("text") or child.get("name") or ""
+                        if text:
+                            steps.append(str(text))
+                    elif child:
+                        steps.append(str(child))
+                continue
             step = step.get("text") or step.get("name") or ""
         if step:
             steps.append(str(step))
@@ -150,7 +177,7 @@ def html_to_text(html: str) -> str:
     return "\n".join(lines)
 
 
-def llm_recipe(text: str, source: str) -> dict | None:
+def llm_recipe(text: str, source: str, choice: dict | None = None, cloud: dict | None = None) -> dict | None:
     prompt = (
         "Extract the recipe from the following text. Respond with JSON only, in this exact shape:\n"
         '{"title": str, "basePortions": number, '
@@ -159,7 +186,7 @@ def llm_recipe(text: str, source: str) -> dict | None:
         "Convert amounts to the given units (1000 g -> 1 kg, 500 ml -> 0.5 l). "
         "Use null amount and unit for ingredients without a measurable quantity.\n\n" + text[:6000]
     )
-    data = llm.generate_json(prompt)
+    data = llm.generate_json(prompt, choice, cloud)
     if not isinstance(data, dict) or "ingredients" not in data:
         return None
     ingredients = []
@@ -181,11 +208,11 @@ def llm_recipe(text: str, source: str) -> dict | None:
     }
 
 
-def import_recipe_from_text(text: str, source: str = "pasted") -> dict:
-    return llm_recipe(text, source) or heuristic_recipe(text, source)
+def import_recipe_from_text(text: str, source: str = "pasted", choice: dict | None = None, cloud: dict | None = None) -> dict:
+    return llm_recipe(text, source, choice, cloud) or heuristic_recipe(text, source)
 
 
-def import_recipe_from_url(url: str) -> dict:
+def import_recipe_from_url(url: str, choice: dict | None = None, cloud: dict | None = None) -> dict:
     response = httpx.get(url, timeout=20, follow_redirects=True,
                          headers={"User-Agent": "Mozilla/5.0 (compatible; OpenPantry/0.1)"})
     response.raise_for_status()
@@ -194,8 +221,8 @@ def import_recipe_from_url(url: str) -> dict:
         schema_recipe = extract_schema_org_recipe(response.text, url)
         if schema_recipe:
             return schema_recipe
-        return import_recipe_from_text(html_to_text(response.text), url)
-    return import_recipe_from_text(response.text, url)
+        return import_recipe_from_text(html_to_text(response.text), url, choice, cloud)
+    return import_recipe_from_text(response.text, url, choice, cloud)
 
 
 def ocr_receipt_file(path: str) -> str | None:
@@ -212,7 +239,7 @@ def ocr_receipt_file(path: str) -> str | None:
     return result.stdout
 
 
-def llm_receipt_items(ocr_text: str) -> list[dict] | None:
+def llm_receipt_items(ocr_text: str, choice: dict | None = None, cloud: dict | None = None) -> dict | None:
     prompt = (
         "Extract the purchased items from this grocery receipt OCR text. Respond with JSON only:\n"
         '{"store": str, "date": "YYYY-MM-DD", "total": number, '
@@ -220,7 +247,7 @@ def llm_receipt_items(ocr_text: str) -> list[dict] | None:
         "Skip non-product lines (totals, taxes, payment info). quantity is the number of packages.\n\n"
         + ocr_text[:6000]
     )
-    data = llm.generate_json(prompt)
+    data = llm.generate_json(prompt, choice, cloud)
     if not isinstance(data, dict) or not isinstance(data.get("items"), list):
         return None
     items = [

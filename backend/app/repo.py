@@ -8,6 +8,21 @@ def new_id() -> str:
     return uuid.uuid4().hex[:12]
 
 
+def get_setting(key: str, default: str | None = None) -> str | None:
+    with get_db() as db:
+        row = db.execute("SELECT value FROM settings WHERE key = ?", (key,)).fetchone()
+    return row["value"] if row else default
+
+
+def set_setting(key: str, value: str):
+    with get_db() as db:
+        db.execute(
+            "INSERT INTO settings (key, value) VALUES (?, ?)"
+            " ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            (key, value),
+        )
+
+
 def list_items() -> list[dict]:
     with get_db() as db:
         rows = db.execute("SELECT * FROM items ORDER BY name").fetchall()
@@ -178,7 +193,7 @@ def get_recipe(recipe_id: str) -> dict | None:
 def _ingredients_for(recipe_id: str) -> list[dict]:
     with get_db() as db:
         rows = db.execute(
-            "SELECT id, raw, amount, item_id, tracked, suggestion FROM ingredients WHERE recipe_id = ?",
+            "SELECT id, raw, amount, unit, item_id, tracked, suggestion FROM ingredients WHERE recipe_id = ?",
             (recipe_id,),
         ).fetchall()
     return [dict(r) for r in rows]
@@ -204,9 +219,9 @@ def create_recipe(title: str, source: str, base_portions: float,
         )
         for ing in ingredients:
             db.execute(
-                "INSERT INTO ingredients (id, recipe_id, raw, amount, item_id, tracked, suggestion)"
-                " VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (new_id(), recipe_id, ing.get("raw", ""), ing.get("amount"),
+                "INSERT INTO ingredients (id, recipe_id, raw, amount, unit, item_id, tracked, suggestion)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (new_id(), recipe_id, ing.get("raw", ""), ing.get("amount"), ing.get("unit"),
                  ing.get("item_id"), 1 if ing.get("tracked", True) else 0, ing.get("suggestion")),
             )
     return get_recipe(recipe_id)

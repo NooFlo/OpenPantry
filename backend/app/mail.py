@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from email.header import decode_header
 
 from . import extract, repo
+from .config import get_cloud_config, get_model_choice
 
 log = logging.getLogger("openpantry.mail")
 
@@ -84,7 +85,11 @@ def process_message(msg: email.message.Message) -> bool:
         if text and len(text.strip()) > len(ocr_text):
             ocr_text = text
 
-    extracted = extract.llm_receipt_items(ocr_text) if ocr_text else None
+    extracted = None
+    if ocr_text:
+        extracted = extract.llm_receipt_items(
+            ocr_text, get_model_choice("receipts"), get_cloud_config()
+        )
     if extracted:
         receipt = repo.create_receipt(
             store=extracted["store"] or guess_store(msg, subject),

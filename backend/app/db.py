@@ -53,6 +53,7 @@ CREATE TABLE IF NOT EXISTS ingredients (
     recipe_id TEXT NOT NULL REFERENCES recipes(id) ON DELETE CASCADE,
     raw TEXT NOT NULL,
     amount REAL,
+    unit TEXT,
     item_id TEXT REFERENCES items(id),
     tracked INTEGER NOT NULL DEFAULT 1,
     suggestion TEXT
@@ -63,6 +64,11 @@ CREATE TABLE IF NOT EXISTS shopping_list (
     name TEXT NOT NULL,
     amount REAL NOT NULL,
     unit TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS settings (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
 );
 """
 
@@ -82,3 +88,6 @@ def get_db():
 def init_db():
     with get_db() as db:
         db.executescript(SCHEMA)
+        columns = {row["name"] for row in db.execute("PRAGMA table_info(ingredients)")}
+        if "unit" not in columns:
+            db.execute("ALTER TABLE ingredients ADD COLUMN unit TEXT")
