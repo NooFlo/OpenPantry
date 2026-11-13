@@ -16,6 +16,7 @@ export interface Ingredient {
   id: string;
   raw: string;
   amount?: number;
+  unit?: string;
   itemId?: string;
   tracked: boolean;
   suggestion?: string;

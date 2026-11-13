@@ -193,7 +193,7 @@ def get_recipe(recipe_id: str) -> dict | None:
 def _ingredients_for(recipe_id: str) -> list[dict]:
     with get_db() as db:
         rows = db.execute(
-            "SELECT id, raw, amount, item_id, tracked, suggestion FROM ingredients WHERE recipe_id = ?",
+            "SELECT id, raw, amount, unit, item_id, tracked, suggestion FROM ingredients WHERE recipe_id = ?",
             (recipe_id,),
         ).fetchall()
     return [dict(r) for r in rows]
@@ -219,9 +219,9 @@ def create_recipe(title: str, source: str, base_portions: float,
         )
         for ing in ingredients:
             db.execute(
-                "INSERT INTO ingredients (id, recipe_id, raw, amount, item_id, tracked, suggestion)"
-                " VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (new_id(), recipe_id, ing.get("raw", ""), ing.get("amount"),
+                "INSERT INTO ingredients (id, recipe_id, raw, amount, unit, item_id, tracked, suggestion)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (new_id(), recipe_id, ing.get("raw", ""), ing.get("amount"), ing.get("unit"),
                  ing.get("item_id"), 1 if ing.get("tracked", True) else 0, ing.get("suggestion")),
             )
     return get_recipe(recipe_id)

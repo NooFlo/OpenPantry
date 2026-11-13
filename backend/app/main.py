@@ -197,7 +197,8 @@ def import_recipe(body: ImportRequest):
 def _create_recipe_with_matches(data: dict) -> dict:
     ingredients = []
     for ing in data["ingredients"]:
-        entry = {"raw": ing["raw"], "amount": ing.get("amount"), "tracked": True, "suggestion": None}
+        entry = {"raw": ing["raw"], "amount": ing.get("amount"), "unit": ing.get("unit"),
+                 "tracked": True, "suggestion": None}
         if ing.get("unit") and ing.get("amount") is not None:
             item = repo.find_item_by_name(ing["name"])
             if item:
@@ -239,7 +240,7 @@ def match_ingredient(recipe_id: str, ingredient_id: str, body: IngredientMatchRe
         raise HTTPException(404, "ingredient not found")
     item = repo.find_item_by_name(body.item_name)
     if not item:
-        item = repo.create_item(name=body.item_name)
+        item = repo.create_item(name=body.item_name, unit=ingredient.get("unit") or "pcs")
     amount = ingredient["amount"]
     if amount is None:
         numbers = re.findall(r"\d+(?:[.,]\d+)?", ingredient["raw"])
