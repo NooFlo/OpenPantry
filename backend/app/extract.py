@@ -5,7 +5,7 @@ import subprocess
 
 import httpx
 
-from . import llm
+from . import llm, telemetry
 
 UNIT_ALIASES = {
     "g": "g", "gr": "g", "gramm": "g",
@@ -21,6 +21,46 @@ INGREDIENT_RE = re.compile(
     r"(.+?)\s*$",
     re.IGNORECASE,
 )
+
+# Andy Cooks filter chips: the fixed set the recipe list offers above the
+# tag chips. Any other tag stays on the recipe but gets no filter chip.
+CATEGORY_FILTERS = [
+    "Quick", "Chicken", "Beef", "Pasta", "Fish and Seafood", "Vegetarian", "Comfort Food",
+    "Slow Cooked", "BBQ", "Burgers and Sandwiches", "Curry", "Noodles", "Pork", "Lamb",
+    "Dessert", "Breakfast", "Salad", "Soup",
+]
+TAG_ALIASES = {
+    "quick": "quick", "quick & easy": "quick", "quick and easy": "quick", "easy": "quick",
+    "weeknight": "quick", "fast": "quick",
+    "chicken": "chicken",
+    "beef": "beef",
+    "pasta": "pasta",
+    "fish": "fish and seafood", "seafood": "fish and seafood", "fish and seafood": "fish and seafood",
+    "fish & seafood": "fish and seafood", "shellfish": "fish and seafood",
+    "vegetarian": "vegetarian", "veggie": "vegetarian", "plant based": "vegetarian",
+    "comfort food": "comfort food", "comfort": "comfort food",
+    "slow cooked": "slow cooked", "slow cook": "slow cooked", "slow-cooked": "slow cooked",
+    "bbq": "bbq", "barbecue": "bbq",
+    "burgers and sandwiches": "burgers and sandwiches", "burgers & sandwiches": "burgers and sandwiches",
+    "burger": "burgers and sandwiches", "burgers": "burgers and sandwiches",
+    "sandwich": "burgers and sandwiches", "sandwiches": "burgers and sandwiches",
+    "curry": "curry", "curries": "curry",
+    "noodles": "noodles", "noodle": "noodles",
+    "pork": "pork",
+    "lamb": "lamb",
+    "dessert": "dessert", "desserts": "dessert", "sweet": "dessert",
+    "breakfast": "breakfast", "brekkie": "breakfast",
+    "salad": "salad", "salads": "salad",
+    "soup": "soup", "soups": "soup",
+}
+ISO_DURATION_RE = re.compile(
+    r"P(?:(\d+)D)?T?(?:(\d+)H)?(?:(\d+)M)?(?:(\d+(?:\.\d+)?)S)?",
+    re.IGNORECASE,
+)
+PLAIN_DURATION_RE = re.compile(
+    r"(?:(\d+(?:[.,]\d+)?)\s*(?:h(?:our)?s?|std))?\s*(?:(\d+(?:[.,]\d+)?)\s*m(?:in(?:ute)?s?)?)?\s*$",
+    re.IGNORECASE,
+)
 SPOON_UNITS = {"tsp", "teaspoon", "teaspoons", "tbsp", "tbs", "tablespoon", "tablespoons",
                "el", "tl", "prise", "pinch", "handful", "splash", "sprig", "sprigs"}
 FRACTIONS = {"½": "0.5", "¼": "0.25", "¾": "0.75", "⅓": "0.33", "⅔": "0.67", "⅛": "0.125"}
@@ -32,6 +72,58 @@ def _replace_fractions(line: str) -> str:
         line = line.replace(frac, dec)
     return line
 STEP_HINTS = re.compile(r"\b(minut|min\.|backen|braten|kochen|erhitzen|rühren|ruehren|geben|stir|bake|fry|boil|heat|mix|add|preheat|oven)\b", re.IGNORECASE)
+
+# "post-processed" -> "raw" ingredient names:
+# package/measure words and preparation adjectives that get stripped from
+# ingredient names so "2 Zehen Knoblauch" -> "Knoblauch". Failing to strip is
+# harmless (only affects matching), wrong stripping is not -> explicit sets only.
+MEASURE_WORDS = {
+    "clove", "cloves", "zehen", "bund", "stange", "stangen", "dose", "dosen", "prise", "prisen",
+    "tl", "el", "esslöffel", "teelöffel", "handvoll", "bunch", "stick", "sticks",
+    "sprig", "sprigs", "beutel", "packung", "packungen", "flasche", "flaschen", "tassen", "cup", "cups",
+    "glass", "gläser", "stange", "scheibe", "scheiben", "ml", "l", "cl", "g", "kg",
+}
+PREP_WORDS = {
+    "gerieben", "geriebener", "geriebene", "geriebenes", "gehackt", "gehackter", "gehackte", "gehacktes",
+    "gewürfelt", "gewürfelter", "gewürfelte", "gewürfeltes", "geschält", "geschälte", "geschälter",
+    "mehligkochend", "mehligkochende", "mehligkochender", "mehligkochendes",
+    "festkochend", "festkochende", "mittlere", "mittlerer", "mittleres", "kleine", "kleiner", "kleines",
+    "große", "großer", "großes", "frische", "frischer", "frisches",
+    "steamed", "toasted", "grated", "sliced", "chopped", "minced", "diced", "crushed",
+    "washed", "peeled", "beaten", "separated", "extra", "virgin",
+}
+PREP_HINT_RE = re.compile(
+    r"grated|sliced|chopped|separated|diced|minced|washed|halved|peeled|beaten|crushed|steamed|toasted"
+    r"|thumb|piece|pieces|bunch|stick|clove|to serve|to garnish|to season|nach geschmack|zum würzen"
+    r"|gerieben|gehackt|gewürfelt|geschält|geviertelt|in streifen|würfel|fein|mehlig|mittlere|prise|handvoll|bund|zehe|stange|dose",
+    re.IGNORECASE,
+)
+
+
+def base_ingredient_name(name: str) -> str:
+    """Reduce a post-processed ingredient description to the raw grocery item.
+
+    Deterministic and conservative: "spring onions, white and green parts
+    separated" -> "spring onions", "1 mittlere Karotte (ca. 80 g)" -> "Karotte".
+    Returns the input unchanged when nothing applies.
+    """
+    s = re.sub(r"\([^)]*\)", " ", name).strip()
+    if "," in s:
+        s = s.split(",", 1)[0].strip()
+    tokens = s.split()
+    while tokens and re.fullmatch(r"[\d.,/½¼¾⅓⅔⅛]+(?:\s*(?:g|kg|ml|l|cl))?", tokens[0], re.IGNORECASE):
+        tokens.pop(0)
+    while tokens and tokens[0].lower() in MEASURE_WORDS:
+        tokens.pop(0)
+    while tokens and tokens[0].lower() in PREP_WORDS:
+        tokens.pop(0)
+    result = " ".join(tokens).strip(" -–")
+    return result if result else name.strip()
+
+
+def needs_name_canonicalization(name: str) -> bool:
+    return bool(PREP_HINT_RE.search(base_ingredient_name(name)))
+
 HEADER_RE = re.compile(r"^(zutaten|ingredients|servings|preparation|zubereitung)\b|^\W*for \d+ (portions|servings)", re.IGNORECASE)
 PORTIONS_RE = re.compile(r"(?:für|for)\s*(\d+)\s*(?:portionen|portions|servings)", re.IGNORECASE)
 
@@ -74,7 +166,120 @@ def parse_ingredient_line(line: str) -> dict | None:
     return {"raw": line, "amount": None, "unit": None, "name": name}
 
 
-def heuristic_recipe(text: str, source: str = "pasted") -> dict:
+def parse_duration_minutes(value) -> float | None:
+    """Parse ISO 8601 durations (PT1H30M), plain '90 minutes' text or a bare number."""
+    if value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return float(value) if value > 0 else None
+    if isinstance(value, list):
+        value = value[0] if value and value[0] is not None else None
+        return parse_duration_minutes(value)
+    if not isinstance(value, str):
+        return None
+    text = value.strip().lower()
+    minutes = None
+    if re.match(r"^p", text):
+        match = ISO_DURATION_RE.search(text)
+        if match:
+            days, hours, mins, secs = match.groups()
+            minutes = float(days or 0) * 1440 + float(hours or 0) * 60 + float(mins or 0) + float(secs or 0) / 60
+    else:
+        bare = re.match(r"^\d+(?:[.,]\d+)?$", text)
+        if bare:
+            minutes = float(text.replace(",", "."))
+        else:
+            match = PLAIN_DURATION_RE.search(text)
+            if match:
+                hours, mins = match.groups()
+                if hours or mins:
+                    minutes = float((hours or "0").replace(",", ".")) * 60 + float((mins or "0").replace(",", "."))
+    return minutes if minutes and minutes > 0 else None
+
+
+CATEGORY_DISPLAY = {chip.lower(): chip for chip in CATEGORY_FILTERS}
+
+
+def normalize_tags(raw, exclude: str | None = None) -> list[str]:
+    """Carry over all source tags onto the canonical taxonomy where one exists.
+
+    Drops the recipe title and long-tail SEO phrases; source keyword lists on
+    e.g. andy-cooks.com lead with the dish name and multi-word search phrases.
+    Everything else is kept so a source's own tags survive ingestion.
+    """
+    if raw is None:
+        return []
+    if isinstance(raw, (list, tuple)):
+        items = [str(item) for item in raw]
+    else:
+        items = str(raw).replace(";", ",").split(",")
+    exclude_lower = (exclude or "").strip().lower()
+    tags: list[str] = []
+    seen: set[str] = set()
+    for item in items:
+        tag = re.sub(r"\s+", " ", item.strip())
+        if not tag or len(tag) > 40 or len(tag.split()) > 3:
+            continue
+        if exclude_lower and tag.lower() == exclude_lower:
+            continue
+        # SEO synonym phrases, not categories: "...recipe" suffixes and
+        # tags that just restate the dish title
+        if re.search(r"\brecipe\b|\bhow to\b", tag.lower()):
+            continue
+        if exclude_lower and exclude_lower in tag.lower():
+            continue
+        canonical = TAG_ALIASES.get(tag.lower())
+        canonical_tag = CATEGORY_DISPLAY.get(canonical, canonical) if canonical else None
+        # anything non-canonical with 3+ words is an SEO phrase, not a category
+        if canonical_tag is None and len(tag.split()) > 2:
+            continue
+        tag = canonical_tag if canonical_tag else tag[0].upper() + tag[1:]
+        if tag.lower() in seen:
+            continue
+        seen.add(tag.lower())
+        tags.append(tag)
+    return tags
+
+
+def _first_text(value) -> str | None:
+    """Schema fields may be str or list; take the first text entry."""
+    if isinstance(value, list):
+        value = value[0] if value else None
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    return None
+
+
+def _image_url(value) -> str | None:
+    if isinstance(value, list):
+        value = value[0] if value else None
+    if isinstance(value, dict):
+        value = value.get("url")
+    if isinstance(value, str) and value.startswith("http"):
+        return value
+    return None
+
+
+def recipe_meta_from_schema(node: dict) -> dict:
+    """Prep/cook/total minutes, cuisine, category, tags, image from a schema.org node."""
+    prep = parse_duration_minutes(node.get("prepTime"))
+    cook = parse_duration_minutes(node.get("cookTime"))
+    total = parse_duration_minutes(node.get("totalTime"))
+    if total is None and (prep is not None or cook is not None):
+        total = (prep or 0) + (cook or 0) or None
+    meta = {
+        "prep_minutes": prep,
+        "cook_minutes": cook,
+        "total_minutes": total,
+        "cuisine": _first_text(node.get("recipeCuisine")),
+        "category": _first_text(node.get("recipeCategory")),
+        "tags": normalize_tags(node.get("keywords"), exclude=node.get("name")),
+        "image_url": _image_url(node.get("image")),
+    }
+    return {k: v for k, v in meta.items() if v is not None and v != []}
+
+
+def heuristic_recipe(text: str, source: str = "pasted", image_url: str | None = None) -> dict:
     lines = [line.strip() for line in text.splitlines() if line.strip()]
     ingredients, steps = [], []
     base_portions = 4
@@ -93,13 +298,16 @@ def heuristic_recipe(text: str, source: str = "pasted") -> dict:
     title = "Imported recipe"
     if lines and not parse_ingredient_line(lines[0]):
         title = lines[0]
-    return {
+    recipe = {
         "title": title,
         "source": source,
         "base_portions": base_portions,
         "ingredients": ingredients,
         "steps": steps,
     }
+    if image_url:
+        recipe["image_url"] = image_url
+    return recipe
 
 
 def extract_schema_org_recipe(html: str, url: str) -> dict | None:
@@ -159,13 +367,15 @@ def _schema_to_recipe(node: dict, url: str) -> dict:
             step = step.get("text") or step.get("name") or ""
         if step:
             steps.append(str(step))
-    return {
+    recipe = {
         "title": str(node.get("name") or "Imported recipe"),
         "source": url,
         "base_portions": base_portions,
         "ingredients": ingredients,
         "steps": steps,
     }
+    recipe.update(recipe_meta_from_schema(node))
+    return recipe
 
 
 def html_to_text(html: str) -> str:
@@ -177,14 +387,19 @@ def html_to_text(html: str) -> str:
     return "\n".join(lines)
 
 
-def llm_recipe(text: str, source: str, choice: dict | None = None, cloud: dict | None = None) -> dict | None:
+def llm_recipe(text: str, source: str, choice: dict | None = None, cloud: dict | None = None,
+               image_url: str | None = None) -> dict | None:
+    telemetry.set_meta(prompt_chars=len(text), truncated=len(text) > 6000)
     prompt = (
         "Extract the recipe from the following text. Respond with JSON only, in this exact shape:\n"
         '{"title": str, "basePortions": number, '
+        '"prepMinutes": number|null, "cookMinutes": number|null, '
+        '"cuisine": str|null, "category": str|null, "tags": [str], '
         '"ingredients": [{"raw": str, "amount": number|null, "unit": "g"|"kg"|"ml"|"l"|"pcs"|null, "name": str}], '
         '"steps": [str]}\n'
         "Convert amounts to the given units (1000 g -> 1 kg, 500 ml -> 0.5 l). "
-        "Use null amount and unit for ingredients without a measurable quantity.\n\n" + text[:6000]
+        "Use null amount and unit for ingredients without a measurable quantity. "
+        "classTags describe the dish in 1-3 short labels, e.g. Chicken, Pasta, Quick, Vegetarian.\n\n" + text[:6000]
     )
     data = llm.generate_json(prompt, choice, cloud)
     if not isinstance(data, dict) or "ingredients" not in data:
@@ -199,29 +414,65 @@ def llm_recipe(text: str, source: str, choice: dict | None = None, cloud: dict |
             "unit": ing.get("unit") if ing.get("unit") in ("g", "kg", "ml", "l", "pcs") else None,
             "name": str(ing.get("name") or ing.get("raw") or ""),
         })
+
+    def _minutes(value):
+        if isinstance(value, (int, float)) and value > 0:
+            return float(value)
+        return parse_duration_minutes(value)
+
+    total = parse_duration_minutes(data.get("totalMinutes"))
+    prep, cook = _minutes(data.get("prepMinutes")), _minutes(data.get("cookMinutes"))
+    if total is None and (prep is not None or cook is not None):
+        total = (prep or 0) + (cook or 0) or None
     return {
         "title": str(data.get("title") or "Imported recipe"),
         "source": source,
         "base_portions": float(data.get("basePortions") or 4),
         "ingredients": ingredients,
         "steps": [str(s) for s in data.get("steps", [])],
+        "prep_minutes": prep,
+        "cook_minutes": cook,
+        "total_minutes": total,
+        "cuisine": data.get("cuisine") if isinstance(data.get("cuisine"), str) else None,
+        "category": data.get("category") if isinstance(data.get("category"), str) else None,
+        "tags": normalize_tags(data.get("tags")),
+        "image_url": image_url,
     }
 
 
-def import_recipe_from_text(text: str, source: str = "pasted", choice: dict | None = None, cloud: dict | None = None) -> dict:
-    return llm_recipe(text, source, choice, cloud) or heuristic_recipe(text, source)
+def import_recipe_from_text(text: str, source: str = "pasted", choice: dict | None = None,
+                            cloud: dict | None = None, image_url: str | None = None) -> dict:
+    result = llm_recipe(text, source, choice, cloud, image_url)
+    if result is None or not result["ingredients"]:
+        telemetry.record("fallback_heuristic", 0.0, reason="llm empty or unparseable")
+        telemetry.set_meta(fallback="heuristic")
+        return heuristic_recipe(text, source, image_url=image_url)
+    return result
+
+
+def og_image_url(html: str) -> str | None:
+    match = re.search(
+        r'<meta[^>]+property=["\']og:image["\'][^>]+content=["\']([^"\']+)["\']', html, re.IGNORECASE
+    )
+    return match.group(1) if match and match.group(1).startswith("http") else None
 
 
 def import_recipe_from_url(url: str, choice: dict | None = None, cloud: dict | None = None) -> dict:
-    response = httpx.get(url, timeout=20, follow_redirects=True,
-                         headers={"User-Agent": "Mozilla/5.0 (compatible; OpenPantry/0.1)"})
-    response.raise_for_status()
+    with telemetry.span("fetch_url"):
+        response = httpx.get(url, timeout=20, follow_redirects=True,
+                             headers={"User-Agent": "Mozilla/5.0 (compatible; OpenPantry/0.1)"})
+        response.raise_for_status()
     content_type = response.headers.get("content-type", "")
     if "html" in content_type:
-        schema_recipe = extract_schema_org_recipe(response.text, url)
+        with telemetry.span("schema_org"):
+            schema_recipe = extract_schema_org_recipe(response.text, url)
         if schema_recipe:
+            telemetry.set_meta(path="schema_org")
             return schema_recipe
-        return import_recipe_from_text(html_to_text(response.text), url, choice, cloud)
+        with telemetry.span("html_to_text"):
+            body = html_to_text(response.text)
+        telemetry.set_meta(path="llm", body_chars=len(body))
+        return import_recipe_from_text(body, url, choice, cloud, og_image_url(response.text))
     return import_recipe_from_text(response.text, url, choice, cloud)
 
 

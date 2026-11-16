@@ -7,7 +7,7 @@ interface ThemeToggleProps {
 
 export default function ThemeToggle({ theme, onToggle }: ThemeToggleProps) {
   return (
-    <button className="icon-btn" onClick={onToggle} aria-label="Toggle theme">
+    <button className="icon-btn theme-toggle" onClick={onToggle} aria-label="Toggle theme">
       {theme === "dark" ? <IconSun size={19} /> : <IconMoon size={19} />}
     </button>
   );

@@ -7,7 +7,11 @@ from app.extract import (  # noqa: E402
     extract_schema_org_recipe,
     heuristic_recipe,
     html_to_text,
+    normalize_tags,
+    og_image_url,
+    parse_duration_minutes,
     parse_ingredient_line,
+    recipe_meta_from_schema,
 )
 
 
@@ -112,3 +116,100 @@ def test_html_to_text_strips_scripts():
     text = html_to_text("<html><script>var x=1;</script><body><p>Hello</p><p>500 g Mehl</p></body></html>")
     assert "var x" not in text
     assert "500 g Mehl" in text
+
+
+def test_parse_duration_minutes_iso():
+    assert parse_duration_minutes("PT30M") == 30
+    assert parse_duration_minutes("PT1H30M") == 90
+    assert parse_duration_minutes("PT45S") == 0.75
+    assert parse_duration_minutes("P1DT30M") == 1470
+
+
+def test_parse_duration_minutes_text_and_numbers():
+    assert parse_duration_minutes("90 minutes") == 90
+    assert parse_duration_minutes("1 hour") == 60
+    assert parse_duration_minutes(30) == 30
+    assert parse_duration_minutes("") is None
+    assert parse_duration_minutes(None) is None
+
+
+def test_normalize_tags_maps_aliases():
+    assert normalize_tags("Quick & easy, Chicken, Pasta, One Pan") == [
+        "Quick", "Chicken", "Pasta", "One Pan",
+    ]
+    assert normalize_tags(["seafood", "BBQ", "veggie"]) == [
+        "Fish and Seafood", "BBQ", "Vegetarian",
+    ]
+
+
+def test_normalize_tags_dedupes_and_keeps_all():
+    assert normalize_tags("Chicken, chicken, CHICKEN, Beef") == ["Chicken", "Beef"]
+    assert len(normalize_tags(",a,b,c,d,e,f,g,h,i,j")) == 10
+    # >3-word SEO phrases and overlong strings are dropped
+    assert normalize_tags("creamy chicken orzo recipe, Quick, " + "x" * 50) == ["Quick"]
+
+
+def test_recipe_meta_from_schema_andy_cooks_shape():
+    node = {
+        "@type": "Recipe",
+        "prepTime": "PT10M",
+        "cookTime": "PT20M",
+        "readOnly": True,
+        "recipeCuisine": "Italian",
+        "recipeCategory": "Dinner",
+        "keywords": "Marry Me Chicken Risoni, Dinner, Italian, Chicken, Pasta, One Pan, Quick & easy, "
+                    "chicken risoni with parmesan",
+        "image": ["https://cdn.example.com/risoni.jpg"],
+    }
+    meta = recipe_meta_from_schema(node)
+    assert meta["prep_minutes"] == 10
+    assert meta["cook_minutes"] == 20
+    assert meta["total_minutes"] == 30
+    assert meta["cuisine"] == "Italian"
+    assert meta["category"] == "Dinner"
+    assert meta["tags"] == ["Dinner", "Italian", "Chicken", "Pasta", "One Pan", "Quick"]
+    assert meta["image_url"] == "https://cdn.example.com/risoni.jpg"
+
+
+def test_recipe_meta_total_falls_back_to_prep_plus_cook_and_image_dict():
+    node = {"preparationTime": None, "prepTime": "PT15M", "cookTime": 45,
+            "image": {"url": "https://cdn.example.com/x.jpg"}}
+    meta = recipe_meta_from_schema(node)
+    assert meta["prep_minutes"] == 15
+    assert meta["cook_minutes"] == 45
+    assert meta["total_minutes"] == 60
+    assert meta["image_url"] == "https://cdn.example.com/x.jpg"
+    assert "cuisine" not in meta
+
+
+def test_og_image_url():
+    html = '<meta property="og:image" content="https://img.example.com/a.jpg">'
+    assert og_image_url(html) == "https://img.example.com/a.jpg"
+    assert og_image_url("<html></html>") is None
+
+
+def test_schema_org_recipe_includes_meta():
+    html = '''<html><head><script type="application/ld+json">
+    {"@type": "Recipe", "name": "Risoni", "recipeYield": "4",
+     "prepTime": "PT10M", "cookTime": "PT20M",
+     "recipeCuisine": "Italian", "recipeCategory": "Dinner",
+     "keywords": ["Chicken", "Pasta", "One Pan", "Quick & easy"],
+     "image": "https://cdn.example.com/risoni.jpg",
+     "recipeIngredient": ["300 g risoni"],
+     "recipeInstructions": "Cook the risoni."}
+    </script></head></html>'''
+    recipe = extract_schema_org_recipe(html, "https://example.com/risoni")
+    assert recipe["total_minutes"] == 30
+    assert recipe["cuisine"] == "Italian"
+    assert recipe["tags"] == ["Chicken", "Pasta", "One Pan", "Quick"]
+    assert recipe["image_url"] == "https://cdn.example.com/risoni.jpg"
+
+
+def test_normalize_tags_drops_seo_phrases():
+    # trailing "recipe" suffix and title-restating phrases are filtered
+    tags = normalize_tags(
+        "Dinner, Japanese, Chicken, Chicken teriyaki recipe, Japanese chicken teriyaki, "
+        "Homemade teriyaki sauce, Quick & easy",
+        exclude="Chicken teriyaki",
+    )
+    assert tags == ["Dinner", "Japanese", "Chicken", "Quick"]

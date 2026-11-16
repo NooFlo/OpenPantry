@@ -6,3 +6,6 @@ __pycache__/
 backend/data/
 data/
 .env
+.DS_Store
+.smoke/
+Inspiration/

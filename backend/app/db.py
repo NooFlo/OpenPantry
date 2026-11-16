@@ -17,7 +17,8 @@ CREATE TABLE IF NOT EXISTS items (
     min_quantity REAL NOT NULL DEFAULT 0,
     package_size REAL NOT NULL DEFAULT 1,
     barcode TEXT,
-    uncertain INTEGER NOT NULL DEFAULT 0
+    uncertain INTEGER NOT NULL DEFAULT 0,
+    tracking_mode TEXT NOT NULL DEFAULT 'binary'
 );
 
 CREATE TABLE IF NOT EXISTS receipts (
@@ -45,7 +46,15 @@ CREATE TABLE IF NOT EXISTS recipes (
     title TEXT NOT NULL,
     source TEXT NOT NULL DEFAULT 'pasted',
     base_portions REAL NOT NULL DEFAULT 4,
-    steps_json TEXT NOT NULL DEFAULT '[]'
+    steps_json TEXT NOT NULL DEFAULT '[]',
+    prep_minutes REAL,
+    cook_minutes REAL,
+    total_minutes REAL,
+    cuisine TEXT,
+    category TEXT,
+    tags_json TEXT NOT NULL DEFAULT '[]',
+    image_url TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
 CREATE TABLE IF NOT EXISTS ingredients (
@@ -88,6 +97,31 @@ def get_db():
 def init_db():
     with get_db() as db:
         db.executescript(SCHEMA)
+        item_columns = {row["name"] for row in db.execute("PRAGMA table_info(items)")}
+        if "tracking_mode" not in item_columns:
+            db.execute("ALTER TABLE items ADD COLUMN tracking_mode TEXT NOT NULL DEFAULT 'binary'")
+            # data-entry heuristic: a single entered unit is binary,
+            # several units on record mean the stock is being counted
+            db.execute(
+                "UPDATE items SET tracking_mode = CASE WHEN quantity > 1 THEN 'qty' ELSE 'binary' END"
+            )
         columns = {row["name"] for row in db.execute("PRAGMA table_info(ingredients)")}
         if "unit" not in columns:
             db.execute("ALTER TABLE ingredients ADD COLUMN unit TEXT")
+        recipe_columns = {row["name"] for row in db.execute("PRAGMA table_info(recipes)")}
+        additions = {
+            "prep_minutes": "REAL",
+            "cook_minutes": "REAL",
+            "total_minutes": "REAL",
+            "cuisine": "TEXT",
+            "category": "TEXT",
+            "tags_json": "TEXT NOT NULL DEFAULT '[]'",
+            "image_url": "TEXT",
+            # SQLite forbids non-constant DEFAULT expressions in ALTER TABLE
+            # ADD COLUMN, so backfill existing rows below instead
+            "created_at": "TEXT",
+        }
+        for column, kind in additions.items():
+            if column not in recipe_columns:
+                db.execute(f"ALTER TABLE recipes ADD COLUMN {column} {kind}")
+        db.execute("UPDATE recipes SET created_at = datetime('now') WHERE created_at IS NULL")

@@ -37,11 +37,12 @@ export default function ReceiptsView({ receipts, onMatchItem }: ReceiptsViewProp
 
       <h2 className="section-title">Recent</h2>
 
+      <div className="receipts-grid">
       {receipts.map((receipt) => {
         const open = openId === receipt.id;
         const pending = receipt.items.filter((i) => i.status === "pending");
         return (
-          <div key={receipt.id} className="card receipt-card" style={{ marginBottom: 10 }}>
+          <div key={receipt.id} className="card receipt-card">
             <button
               className="receipt-head"
               onClick={() => (receipt.status === "review" ? setOpenId(open ? null : receipt.id) : undefined)}
@@ -86,6 +87,7 @@ export default function ReceiptsView({ receipts, onMatchItem }: ReceiptsViewProp
           </div>
         );
       })}
+      </div>
     </div>
   );
 }

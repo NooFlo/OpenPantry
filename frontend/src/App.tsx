@@ -1,23 +1,28 @@
 import { useEffect, useState } from "react";
-import type { Item, ModelList, Recipe, Receipt, Settings, SettingsPatch, ShoppingListEntry, Tab } from "./types";
+import type { Item, ItemPatch, ModelList, Recipe, Receipt, Settings, SettingsPatch, ShoppingListEntry, Tab } from "./types";
 import {
   addMissingToShoppingList,
   addToShoppingList,
   confirmLow,
   consumeItem,
   cookRecipe,
+  deleteItem,
   fetchItems,
   fetchModels,
   fetchReceipts,
   fetchRecipes,
   fetchSettings,
+  fetchShoppingList,
   matchRecipeIngredient,
   matchReceiptItem as matchReceiptItemApi,
-  markUntracked,
+  pushShoppingList,
   removeFromShoppingList,
+  restockItem,
+  updateItem,
   updateSettings,
 } from "./api";
 import TabBar from "./components/TabBar";
+import Sidebar from "./components/Sidebar";
 import HomeScreen from "./screens/HomeScreen";
 import InventoryScreen from "./screens/InventoryScreen";
 import RecipesScreen from "./screens/RecipesScreen";
@@ -30,6 +35,9 @@ const DEFAULT_SETTINGS: Settings = {
   cloudBaseUrl: "https://api.mistral.ai/v1",
   cloudModel: "mistral-small-latest",
   cloudKeySet: false,
+  haUrl: "",
+  haEntity: "todo.shopping_list",
+  haKeySet: false,
 };
 
 function initialTheme(): Theme {
@@ -56,6 +64,7 @@ export default function App() {
 
   useEffect(() => {
     fetchItems().then(setItems);
+    fetchShoppingList().then(setShoppingList).catch(console.error);
     fetchReceipts().then(setReceipts);
     fetchRecipes().then(setRecipes);
     fetchSettings().then(setSettings).catch(console.error);
@@ -70,11 +79,30 @@ export default function App() {
     setItems((prev) =>
       prev.map((i) =>
         i.id === id
-          ? { ...i, quantity: Math.max(0, Math.round((i.quantity - amount) * 1000) / 1000), uncertain: false }
+          ? i.trackingMode === "binary"
+            ? { ...i, quantity: 0, uncertain: false }
+            : { ...i, quantity: Math.max(0, Math.round((i.quantity - amount) * 1000) / 1000), uncertain: false }
           : i
       )
     );
-    consumeItem(id, amount).catch(console.error);
+    consumeItem(id, amount)
+      .then(() => fetchShoppingList())
+      .then(setShoppingList)
+      .catch(console.error);
+  };
+
+  const restock = (id: string, amount: number) => {
+    setItems((prev) =>
+      prev.map((i) =>
+        i.id === id
+          ? { ...i, quantity: Math.round((i.quantity + amount) * 1000) / 1000, uncertain: false }
+          : i
+      )
+    );
+    restockItem(id, amount)
+      .then(() => fetchShoppingList())
+      .then(setShoppingList)
+      .catch(console.error);
   };
 
   const confirmRunningLow = (id: string, isLow: boolean) => {
@@ -83,21 +111,60 @@ export default function App() {
         i.id !== id ? i : isLow ? { ...i, quantity: 0, uncertain: false } : { ...i, uncertain: false }
       )
     );
-    confirmLow(id, isLow).catch(console.error);
+    confirmLow(id, isLow)
+      .then(() => fetchShoppingList())
+      .then(setShoppingList)
+      .catch(console.error);
+  };
+
+  const removeItem = (id: string) => {
+    setItems((prev) => prev.filter((i) => i.id !== id));
+    deleteItem(id)
+      .then(() => fetchShoppingList())
+      .then(setShoppingList)
+      .catch(console.error);
+  };
+
+  const changeItemThresholds = (id: string, patch: ItemPatch) => {
+    setItems((prev) =>
+      prev.map((i) =>
+        i.id === id
+          ? {
+              ...i,
+              minQuantity: patch.min_quantity ?? i.minQuantity,
+              packageSize: patch.package_size ?? i.packageSize,
+              trackingMode: patch.tracking_mode ?? i.trackingMode,
+            }
+          : i
+      )
+    );
+    updateItem(id, patch).catch(console.error);
   };
 
   const cook = (recipe: Recipe) => {
     setItems((prev) =>
       prev.map((item) => {
-        const used = recipe.ingredients
-          .filter((ing) => ing.tracked && ing.itemId === item.id && ing.amount != null)
-          .reduce((sum, ing) => sum + ((ing.amount ?? 0) * portions) / recipe.basePortions, 0);
+        const usedIngredients = recipe.ingredients.filter(
+          (ing) => ing.tracked && ing.itemId === item.id && ing.amount != null
+        );
+        if (usedIngredients.length === 0) return item;
+        if (item.trackingMode === "binary") {
+          // binary: the amount stays on record, the running-low prompt appears
+          return { ...item, uncertain: item.quantity > 0 ? true : item.uncertain };
+        }
+        const used = usedIngredients.reduce(
+          (sum, ing) => sum + ((ing.amount ?? 0) * portions) / recipe.basePortions,
+          0
+        );
         if (used <= 0) return item;
         const quantity = Math.max(0, Math.round((item.quantity - used) * 1000) / 1000);
         return { ...item, quantity, uncertain: quantity <= item.minQuantity ? true : item.uncertain };
       })
     );
-    cookRecipe(recipe.id, portions).catch(console.error);
+    cookRecipe(recipe.id, portions)
+      .then(() => fetchShoppingList())
+      .then(setShoppingList)
+      .catch(console.error);
   };
 
   const toggleShoppingList = (id: string) => {
@@ -113,22 +180,34 @@ export default function App() {
     removeFromShoppingList(id).then(setShoppingList).catch(console.error);
   };
 
-  const addMissing = (recipe: Recipe) => {
-    addMissingToShoppingList(recipe.id, portions).then(setShoppingList).catch(console.error);
+  const addMissing = async (recipe: Recipe) => {
+    const list = await addMissingToShoppingList(recipe.id, portions);
+    setShoppingList(list);
+    // the backend may have matched ingredient suggestions and created pantry items
+    const [updatedItems, updatedRecipes] = await Promise.all([fetchItems(), fetchRecipes()]);
+    setItems(updatedItems);
+    setRecipes(updatedRecipes);
   };
 
   const matchReceiptItem = (receiptId: string, itemId: string, productName: string) => {
     matchReceiptItemApi(receiptId, itemId, productName)
       .then((updated) => {
         setReceipts((prev) => prev.map((r) => (r.id === updated.id ? updated : r)));
-        return fetchItems();
+        return Promise.all([fetchItems(), fetchShoppingList()]);
       })
-      .then(setItems)
+      .then(([updatedItems, list]) => {
+        setItems(updatedItems);
+        setShoppingList(list);
+      })
       .catch(console.error);
   };
 
   const importRecipeToState = (recipe: Recipe) => {
     setRecipes((prev) => [...prev, recipe]);
+  };
+
+  const refreshRecipeInState = (recipe: Recipe) => {
+    setRecipes((prev) => prev.map((r) => (r.id === recipe.id ? recipe : r)));
   };
 
   const matchIngredient = (recipeId: string, ingredientId: string, itemName: string) => {
@@ -141,61 +220,64 @@ export default function App() {
       .catch(console.error);
   };
 
-  const untrackIngredient = (recipeId: string, ingredientId: string) => {
-    markUntracked(recipeId, ingredientId)
-      .then((updated) => {
-        setRecipes((prev) => prev.map((r) => (r.id === updated.id ? updated : r)));
-      })
-      .catch(console.error);
-  };
-
   const toggleTheme = () => setTheme(theme === "dark" ? "light" : "dark");
 
   return (
-    <>
-      {tab === "home" && (
-        <HomeScreen
-          items={items}
-          shoppingList={shoppingList}
-          onToggleShoppingList={toggleShoppingList}
-          onRemoveFromShoppingList={removeShoppingListEntry}
-          onConfirmLow={confirmRunningLow}
-          theme={theme}
-          onToggleTheme={toggleTheme}
-        />
-      )}
-      {tab === "inventory" && (
-        <InventoryScreen
-          items={items}
-          receipts={receipts}
-          onConsume={consume}
-          onMatchItem={matchReceiptItem}
-          settings={settings}
-          models={models}
-          onSaveSettings={saveSettings}
-          theme={theme}
-          onToggleTheme={toggleTheme}
-        />
-      )}
-      {tab === "recipes" && (
-        <RecipesScreen
-          recipes={recipes}
-          items={items}
-          portions={portions}
-          onPortionsChange={setPortions}
-          onImport={importRecipeToState}
-          onCook={cook}
-          onAddMissing={addMissing}
-          onMatchIngredient={matchIngredient}
-          onMarkUntracked={untrackIngredient}
-          settings={settings}
-          models={models}
-          onSaveSettings={saveSettings}
-          theme={theme}
-          onToggleTheme={toggleTheme}
-        />
-      )}
-      <TabBar active={tab} onChange={setTab} />
-    </>
+    <div className="app">
+      <Sidebar active={tab} onChange={setTab} theme={theme} onToggleTheme={toggleTheme} />
+      <main className="app-main">
+        {tab === "home" && (
+          <HomeScreen
+            items={items}
+            shoppingList={shoppingList}
+            settings={settings}
+            onToggleShoppingList={toggleShoppingList}
+            onRemoveFromShoppingList={removeShoppingListEntry}
+            onPushShoppingList={pushShoppingList}
+            onSaveSettings={saveSettings}
+            onConfirmLow={confirmRunningLow}
+            theme={theme}
+            onToggleTheme={toggleTheme}
+          />
+        )}
+        {(tab === "inventory" || tab === "receipts") && (
+          <InventoryScreen
+            items={items}
+            receipts={receipts}
+            view={tab === "receipts" ? "receipts" : "items"}
+            onViewChange={(v) => setTab(v === "receipts" ? "receipts" : "inventory")}
+            onConsume={consume}
+            onRestock={restock}
+            onDelete={removeItem}
+            onMatchItem={matchReceiptItem}
+            onUpdateItem={changeItemThresholds}
+            settings={settings}
+            models={models}
+            onSaveSettings={saveSettings}
+            theme={theme}
+            onToggleTheme={toggleTheme}
+          />
+        )}
+        {tab === "recipes" && (
+          <RecipesScreen
+            recipes={recipes}
+            items={items}
+            portions={portions}
+            onPortionsChange={setPortions}
+            onImport={importRecipeToState}
+            onRefresh={refreshRecipeInState}
+            onCook={cook}
+            onAddMissing={addMissing}
+            onMatchIngredient={matchIngredient}
+            settings={settings}
+            models={models}
+            onSaveSettings={saveSettings}
+            theme={theme}
+            onToggleTheme={toggleTheme}
+          />
+        )}
+      </main>
+      <TabBar active={tab === "receipts" ? "inventory" : tab} onChange={setTab} />
+    </div>
   );
 }

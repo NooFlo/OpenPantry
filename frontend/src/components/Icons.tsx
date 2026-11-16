@@ -139,3 +139,32 @@ export function IconMinus(props: IconProps) {
     </Svg>
   );
 }
+
+export function IconClock(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <circle cx="12" cy="12" r="8.5" />
+      <path d="M12 7.5V12l3 2" />
+    </Svg>
+  );
+}
+
+export function IconRefresh(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <path d="M20 11a8 8 0 1 0-1.2 6.2" />
+      <path d="M20 5v6h-6" />
+    </Svg>
+  );
+}
+
+export function IconNfc(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <circle cx="5.5" cy="18.5" r="1.5" fill="currentColor" stroke="none" />
+      <path d="M9.5 14.6a5.2 5.2 0 0 1 0 7.8" />
+      <path d="M13.5 11.5a10 10 0 0 1 0 14" />
+      <path d="M17.5 8.5a14 14 0 0 1 0 20" />
+    </Svg>
+  );
+}

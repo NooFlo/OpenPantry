@@ -1,5 +1,8 @@
 export type Unit = "pcs" | "g" | "kg" | "ml" | "l";
 
+/** "binary" = only in stock vs not in stock; "qty" = rounded stock count */
+export type TrackingMode = "binary" | "qty";
+
 export interface Item {
   id: string;
   name: string;
@@ -10,6 +13,13 @@ export interface Item {
   packageSize: number;
   barcode?: string;
   uncertain?: boolean;
+  trackingMode: TrackingMode;
+}
+
+export interface ItemPatch {
+  min_quantity?: number;
+  package_size?: number;
+  tracking_mode?: TrackingMode;
 }
 
 export interface Ingredient {
@@ -29,6 +39,14 @@ export interface Recipe {
   basePortions: number;
   ingredients: Ingredient[];
   steps: string[];
+  prepMinutes?: number;
+  cookMinutes?: number;
+  totalMinutes?: number;
+  cuisine?: string;
+  category?: string;
+  tags?: string[];
+  imageUrl?: string;
+  createdAt?: string;
 }
 
 export type ReceiptStatus = "processing" | "review" | "done";
@@ -57,7 +75,7 @@ export interface ShoppingListEntry {
   unit: Unit;
 }
 
-export type Tab = "home" | "inventory" | "recipes";
+export type Tab = "home" | "inventory" | "receipts" | "recipes";
 
 export interface ModelChoice {
   provider: "local" | "cloud";
@@ -70,6 +88,9 @@ export interface Settings {
   cloudBaseUrl: string;
   cloudModel: string;
   cloudKeySet: boolean;
+  haUrl: string;
+  haEntity: string;
+  haKeySet: boolean;
 }
 
 export interface SettingsPatch {
@@ -78,6 +99,9 @@ export interface SettingsPatch {
   cloudBaseUrl?: string;
   cloudModel?: string;
   cloudApiKey?: string;
+  haUrl?: string;
+  haToken?: string;
+  haEntity?: string;
 }
 
 export interface ModelList {

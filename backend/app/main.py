@@ -5,11 +5,11 @@ from pathlib import Path
 
 import httpx
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import extract, mail, repo, seed
+from . import extract, hass, mail, repo, seed, telemetry
 from .config import get_cloud_config, get_model_choice, set_model_choice
 from .db import init_db
 
@@ -48,12 +48,22 @@ class ConsumeRequest(BaseModel):
     amount: float
 
 
+class RestockRequest(BaseModel):
+    amount: float
+
+
 class BarcodeRequest(BaseModel):
     barcode: str
 
 
 class ConfirmLowRequest(BaseModel):
     is_low: bool
+
+
+class ItemUpdateRequest(BaseModel):
+    min_quantity: float | None = None
+    package_size: float | None = None
+    tracking_mode: str | None = None
 
 
 class ShoppingListRequest(BaseModel):
@@ -88,6 +98,9 @@ class SettingsRequest(BaseModel):
     cloud_base_url: str | None = None
     cloud_model: str | None = None
     cloud_api_key: str | None = None
+    ha_url: str | None = None
+    ha_token: str | None = None
+    ha_entity: str | None = None
 
 
 def _settings_payload() -> dict:
@@ -98,6 +111,9 @@ def _settings_payload() -> dict:
         "cloudBaseUrl": cloud["base_url"],
         "cloudModel": cloud["model"],
         "cloudKeySet": bool(cloud["api_key"]),
+        "haUrl": hass.get_config()["base_url"],
+        "haEntity": hass.get_config()["entity_id"],
+        "haKeySet": hass.enabled(),
     }
 
 
@@ -119,6 +135,14 @@ def update_settings(body: SettingsRequest):
         repo.set_setting("cloud_model", body.cloud_model.strip())
     if body.cloud_api_key is not None:
         repo.set_setting("cloud_api_key", body.cloud_api_key.strip())
+    if body.ha_url is not None:
+        repo.set_setting("ha_url", body.ha_url.strip())
+    if body.ha_token is not None:
+        repo.set_setting("ha_token", body.ha_token.strip())
+    if body.ha_entity is not None:
+        repo.set_setting("ha_entity", body.ha_entity.strip())
+    if body.ha_url is not None or body.ha_token is not None or body.ha_entity is not None:
+        _push_to_ha()
     return _settings_payload()
 
 
@@ -137,6 +161,27 @@ def consume(item_id: str, body: ConsumeRequest):
     item = repo.consume_item(item_id, body.amount)
     if not item:
         raise HTTPException(404, "item not found")
+    _push_to_ha()
+    return camelize(item)
+
+
+@app.post("/api/items/{item_id}/empty")
+def empty(item_id: str):
+    item = repo.empty_item(item_id)
+    if not item:
+        raise HTTPException(404, "item not found")
+    _push_to_ha()
+    return camelize(item)
+
+
+@app.post("/api/items/{item_id}/restock")
+def restock(item_id: str, body: RestockRequest):
+    if body.amount <= 0:
+        raise HTTPException(400, "amount must be > 0")
+    item = repo.restock_item(item_id, body.amount)
+    if not item:
+        raise HTTPException(404, "item not found")
+    _push_to_ha()
     return camelize(item)
 
 
@@ -145,7 +190,31 @@ def scan_barcode(body: BarcodeRequest):
     item = repo.find_item_by_barcode(body.barcode)
     if not item:
         raise HTTPException(404, "unknown barcode")
+    _push_to_ha()
     return camelize(repo.consume_item(item["id"], item["package_size"]))
+
+
+@app.post("/api/items/{item_id}/update")
+def update_item(item_id: str, body: ItemUpdateRequest):
+    if body.min_quantity is not None and body.min_quantity < 0:
+        raise HTTPException(400, "min_quantity must be >= 0")
+    if body.package_size is not None and body.package_size <= 0:
+        raise HTTPException(400, "package_size must be > 0")
+    if body.tracking_mode is not None and body.tracking_mode not in ("binary", "qty"):
+        raise HTTPException(400, "tracking_mode must be 'binary' or 'qty'")
+    item = repo.update_item(item_id, body.min_quantity, body.package_size, body.tracking_mode)
+    if not item:
+        raise HTTPException(404, "item not found")
+    return camelize(item)
+
+
+@app.delete("/api/items/{item_id}")
+def delete_item(item_id: str):
+    item = repo.delete_item(item_id)
+    if not item:
+        raise HTTPException(404, "item not found")
+    _push_to_ha()
+    return camelize(item)
 
 
 @app.post("/api/items/{item_id}/confirm-low")
@@ -153,6 +222,7 @@ def confirm_low(item_id: str, body: ConfirmLowRequest):
     item = repo.confirm_low(item_id, body.is_low)
     if not item:
         raise HTTPException(404, "item not found")
+    _push_to_ha()
     return camelize(item)
 
 
@@ -168,7 +238,9 @@ def match_receipt_item(receipt_id: str, item_id: str, body: ReceiptMatchRequest)
     item = repo.find_item_by_name(body.product_name)
     if not item:
         item = repo.create_item(name=body.product_name)
-    return camelize(repo.match_receipt_item(receipt_id, item_id, item["name"]))
+    receipt = repo.match_receipt_item(receipt_id, item_id, item["name"])
+    _push_to_ha()
+    return camelize(receipt)
 
 
 @app.get("/api/recipes")
@@ -178,38 +250,107 @@ def get_recipes():
 
 @app.post("/api/recipes/import")
 def import_recipe(body: ImportRequest):
-    choice = get_model_choice("recipes")
-    cloud = get_cloud_config()
+    trace = telemetry.start_trace("recipe_import")
+    telemetry.set_meta(kind=body.kind, value=body.value[:100], input_chars=len(body.value))
     try:
+        choice = get_model_choice("recipes")
+        cloud = get_cloud_config()
         if body.kind == "link":
             data = extract.import_recipe_from_url(body.value, choice, cloud)
         elif body.kind == "text":
             data = extract.import_recipe_from_text(body.value, "pasted", choice, cloud)
         else:
+            trace.finish("bad_kind")
             raise HTTPException(400, "kind must be 'link' or 'text'")
     except httpx.HTTPError:
+        trace.finish("fetch_failed")
         raise HTTPException(502, "could not fetch the recipe URL")
     if not data["ingredients"]:
+        trace.finish("no_ingredients")
         raise HTTPException(422, "could not extract any ingredients")
-    return camelize(_create_recipe_with_matches(data))
+    with telemetry.span("match_items"):
+        result = camelize(_create_recipe_with_matches(data, choice, cloud))
+    trace.finish("ok")
+    return result
 
 
-def _create_recipe_with_matches(data: dict) -> dict:
-    ingredients = []
-    for ing in data["ingredients"]:
-        entry = {"raw": ing["raw"], "amount": ing.get("amount"), "unit": ing.get("unit"),
-                 "tracked": True, "suggestion": None}
-        if ing.get("unit") and ing.get("amount") is not None:
-            item = repo.find_item_by_name(ing["name"])
-            if item:
-                entry["item_id"] = item["id"]
-            else:
-                match = repo.best_name_match(ing["name"])
-                entry["suggestion"] = match["name"] if match else ing["name"]
-        else:
-            entry["tracked"] = False
-        ingredients.append(entry)
-    return repo.create_recipe(data["title"], data["source"], data["base_portions"], ingredients, data["steps"])
+@app.get("/api/recipes/import/traces")
+def recipe_import_traces():
+    return telemetry.recent_traces()
+
+
+def _recipe_meta(data: dict) -> dict:
+    keys = ("prep_minutes", "cook_minutes", "total_minutes", "cuisine", "category", "tags", "image_url")
+    return {k: data[k] for k in keys if data.get(k) is not None and data.get(k) != []}
+
+
+def _canonical_names(data: dict, choice: dict | None, cloud: dict | None) -> dict[str, str]:
+    """Post-processed ("spring onions, finely sliced") -> raw ("spring onions").
+
+    Deterministic stripping first; the LLM only sees leftovers that still carry
+    preparation hints, and its output is guarded (see llm.canonicalize_names).
+    """
+    names = [extract.base_ingredient_name(ing["name"]) for ing in data["ingredients"]]
+    residual = [n for n in dict.fromkeys(names) if extract.needs_name_canonicalization(n)]
+    if not residual:
+        return {}
+    with telemetry.span("canonicalize_names", count=len(residual)):
+        mapping = extract.llm.canonicalize_names(residual, choice, cloud)
+    return {k: v for k, v in (mapping or {}).items() if v}
+
+
+# Staples every kitchen has: never stock-tracked, always considered available
+ALWAYS_AVAILABLE = {"water", "wasser"}
+
+
+def _ingredient_entry(ing: dict, canon: dict[str, str]) -> dict:
+    name = extract.base_ingredient_name(ing["name"])
+    name = canon.get(name, name)
+    entry = {"raw": ing["raw"], "amount": ing.get("amount"), "unit": ing.get("unit"),
+             "tracked": True, "suggestion": None}
+    if name.lower() in ALWAYS_AVAILABLE:
+        entry["tracked"] = False
+        return entry
+    item = repo.find_item_by_name(name)
+    if item:
+        entry["item_id"] = item["id"]
+    else:
+        match = repo.best_name_match(name)
+        entry["suggestion"] = match["name"] if match else name
+    return entry
+
+
+def _create_recipe_with_matches(data: dict, choice: dict | None = None, cloud: dict | None = None) -> dict:
+    canon = _canonical_names(data, choice, cloud)
+    ingredients = [_ingredient_entry(ing, canon) for ing in data["ingredients"]]
+    return repo.create_recipe(data["title"], data["source"], data["base_portions"],
+                              ingredients, data["steps"], _recipe_meta(data))
+
+
+@app.post("/api/recipes/{recipe_id}/refresh")
+def refresh_recipe(recipe_id: str):
+    recipe = _get_recipe_or_404(recipe_id)
+    if not recipe["source"].startswith("http"):
+        raise HTTPException(400, "only recipes imported from a link can be refreshed")
+    trace = telemetry.start_trace("recipe_refresh")
+    telemetry.set_meta(recipe_id=recipe_id, value=recipe["source"][:100])
+    try:
+        choice = get_model_choice("recipes")
+        cloud = get_cloud_config()
+        data = extract.import_recipe_from_url(recipe["source"], choice, cloud)
+    except httpx.HTTPError:
+        trace.finish("fetch_failed")
+        raise HTTPException(502, "could not fetch the recipe URL")
+    if not data["ingredients"]:
+        trace.finish("no_ingredients")
+        raise HTTPException(422, "could not extract any ingredients")
+    canon = _canonical_names(data, choice, cloud)
+    ingredients = [_ingredient_entry(ing, canon) for ing in data["ingredients"]]
+    result = camelize(repo.replace_recipe(recipe_id, data["title"], data["source"],
+                                          data["base_portions"], ingredients, data["steps"],
+                                          _recipe_meta(data)))
+    trace.finish("ok")
+    return result
 
 
 def _get_recipe_or_404(recipe_id: str) -> dict:
@@ -222,14 +363,18 @@ def _get_recipe_or_404(recipe_id: str) -> dict:
 @app.post("/api/recipes/{recipe_id}/cook")
 def cook(recipe_id: str, body: CookRequest):
     recipe = _get_recipe_or_404(recipe_id)
-    return camelize(repo.cook_recipe(recipe, body.portions))
+    result = camelize(repo.cook_recipe(recipe, body.portions))
+    _push_to_ha()
+    return result
 
 
 @app.post("/api/recipes/{recipe_id}/add-missing")
 def add_missing(recipe_id: str, body: CookRequest):
     recipe = _get_recipe_or_404(recipe_id)
     items_by_id = {i["id"]: i for i in repo.list_items()}
-    return camelize(repo.add_missing_to_shopping_list(recipe, items_by_id, body.portions))
+    result = camelize(repo.add_missing_to_shopping_list(recipe, items_by_id, body.portions))
+    _push_to_ha()
+    return result
 
 
 @app.post("/api/recipes/{recipe_id}/ingredients/{ingredient_id}/match")
@@ -248,28 +393,37 @@ def match_ingredient(recipe_id: str, ingredient_id: str, body: IngredientMatchRe
     return camelize(repo.match_recipe_ingredient(recipe_id, ingredient_id, item["id"], amount))
 
 
-@app.post("/api/recipes/{recipe_id}/ingredients/{ingredient_id}/untrack")
-def untrack_ingredient(recipe_id: str, ingredient_id: str):
-    _get_recipe_or_404(recipe_id)
-    return camelize(repo.untrack_recipe_ingredient(recipe_id, ingredient_id))
-
-
 @app.get("/api/shopping-list")
 def get_shopping_list():
     return camelize(repo.list_shopping_list())
 
 
+def _push_to_ha():
+    if not hass.enabled():
+        return False
+    return hass.sync(repo.list_shopping_list())
+
+
+@app.post("/api/shopping-list/push")
+def push_shopping_list():
+    return {"pushed": _push_to_ha()}
+
+
 @app.post("/api/shopping-list/{item_id}")
 def add_to_list(item_id: str, body: ShoppingListRequest):
     try:
-        return camelize(repo.add_to_shopping_list(item_id, body.amount))
+        result = camelize(repo.add_to_shopping_list(item_id, body.amount))
+        _push_to_ha()
+        return result
     except KeyError:
         raise HTTPException(404, "item not found")
 
 
 @app.delete("/api/shopping-list/{item_id}")
 def remove_from_list(item_id: str):
-    return camelize(repo.remove_from_shopping_list(item_id))
+    result = camelize(repo.remove_from_shopping_list(item_id))
+    _push_to_ha()
+    return result
 
 
 @app.get("/c/{item_id}", response_class=HTMLResponse)
@@ -277,6 +431,11 @@ def consume_landing(item_id: str):
     item = repo.get_item(item_id)
     if not item:
         raise HTTPException(404, "item not found")
+    binary = item["tracking_mode"] == "binary"
+    stock_line = ("In stock" if item["quantity"] > 0 else "Not in stock") if binary \
+        else f"{item['quantity']} {item['unit']} in stock"
+    button_line = "Mark as used up" if binary \
+        else f"Used up one package ({item['package_size']} {item['unit']})"
     return f"""<!doctype html>
 <html>
 <head>
@@ -293,8 +452,8 @@ p {{ color: #a3a09a; }}
 <body>
 <div style="text-align:center">
 <h1>{item["name"]}</h1>
-<p>{item["quantity"]} {item["unit"]} in stock</p>
-<button onclick="consume()">Used up one package ({item["package_size"]} {item["unit"]})</button>
+<p>{stock_line}</p>
+<button onclick="consume()">{button_line}</button>
 <p id="done"></p>
 </div>
 <script>
@@ -308,6 +467,30 @@ async function consume() {{
 </script>
 </body>
 </html>"""
+
+
+@app.get("/tag/{item_id}/buy", response_class=PlainTextResponse)
+def tag_buy(item_id: str):
+    """Plain-GET tag endpoint: browsers, QR scans and Shortcuts can hit
+    it directly; adds one package to the shopping list."""
+    item = repo.get_item(item_id)
+    if not item:
+        raise HTTPException(404, "item not found")
+    amount = item["package_size"] or 1
+    repo.add_to_shopping_list(item_id, amount)
+    _push_to_ha()
+    return f"{item['name']}: {amount} {item['unit']} added to the shopping list."
+
+
+@app.get("/tag/{item_id}/empty", response_class=PlainTextResponse)
+def tag_empty(item_id: str):
+    """Plain-GET tag endpoint for an empty container: zeroes the stock
+    and puts the item on the shopping list."""
+    item = repo.empty_item(item_id)
+    if not item:
+        raise HTTPException(404, "item not found")
+    _push_to_ha()
+    return f"{item['name']}: empty — added to the shopping list."
 
 
 @app.get("/api/health")

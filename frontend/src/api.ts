@@ -1,4 +1,4 @@
-import type { Item, ModelList, Receipt, Recipe, Settings, SettingsPatch, ShoppingListEntry } from "./types";
+import type { Item, ItemPatch, ModelList, Receipt, Recipe, Settings, SettingsPatch, ShoppingListEntry } from "./types";
 
 const BASE = "/api";
 
@@ -15,6 +15,10 @@ export function fetchItems(): Promise<Item[]> {
   return request<Item[]>("/items");
 }
 
+export function fetchShoppingList(): Promise<ShoppingListEntry[]> {
+  return request<ShoppingListEntry[]>("/shopping-list");
+}
+
 export function fetchReceipts(): Promise<Receipt[]> {
   return request<Receipt[]>("/receipts");
 }
@@ -27,12 +31,28 @@ export function importRecipe(kind: "link" | "text", value: string): Promise<Reci
   return request<Recipe>("/recipes/import", { method: "POST", body: JSON.stringify({ kind, value }) });
 }
 
+export function refreshRecipe(recipeId: string): Promise<Recipe> {
+  return request<Recipe>(`/recipes/${recipeId}/refresh`, { method: "POST", body: "{}" });
+}
+
 export function consumeItem(itemId: string, amount: number): Promise<Item> {
   return request<Item>(`/items/${itemId}/consume`, { method: "POST", body: JSON.stringify({ amount }) });
 }
 
+export function restockItem(itemId: string, amount: number): Promise<Item> {
+  return request<Item>(`/items/${itemId}/restock`, { method: "POST", body: JSON.stringify({ amount }) });
+}
+
 export function confirmLow(itemId: string, isLow: boolean): Promise<Item> {
   return request<Item>(`/items/${itemId}/confirm-low`, { method: "POST", body: JSON.stringify({ is_low: isLow }) });
+}
+
+export function updateItem(itemId: string, patch: ItemPatch): Promise<Item> {
+  return request<Item>(`/items/${itemId}/update`, { method: "POST", body: JSON.stringify(patch) });
+}
+
+export function deleteItem(itemId: string): Promise<Item> {
+  return request<Item>(`/items/${itemId}`, { method: "DELETE" });
 }
 
 export function cookRecipe(recipeId: string, portions: number): Promise<Item[]> {
@@ -71,10 +91,6 @@ export function matchRecipeIngredient(recipeId: string, ingredientId: string, it
   });
 }
 
-export function markUntracked(recipeId: string, ingredientId: string): Promise<Recipe> {
-  return request<Recipe>(`/recipes/${recipeId}/ingredients/${ingredientId}/untrack`, { method: "POST" });
-}
-
 export function fetchSettings(): Promise<Settings> {
   return request<Settings>("/settings");
 }
@@ -86,7 +102,14 @@ export function updateSettings(patch: SettingsPatch): Promise<Settings> {
   if (patch.cloudBaseUrl !== undefined) body.cloud_base_url = patch.cloudBaseUrl;
   if (patch.cloudModel !== undefined) body.cloud_model = patch.cloudModel;
   if (patch.cloudApiKey !== undefined) body.cloud_api_key = patch.cloudApiKey;
+  if (patch.haUrl !== undefined) body.ha_url = patch.haUrl;
+  if (patch.haToken !== undefined) body.ha_token = patch.haToken;
+  if (patch.haEntity !== undefined) body.ha_entity = patch.haEntity;
   return request<Settings>("/settings", { method: "PUT", body: JSON.stringify(body) });
+}
+
+export function pushShoppingList(): Promise<{ pushed: boolean }> {
+  return request<{ pushed: boolean }>("/shopping-list/push", { method: "POST", body: "{}" });
 }
 
 export function fetchModels(): Promise<ModelList> {
