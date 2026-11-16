@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import type { Item, ItemPatch, ModelList, Receipt, Settings, SettingsPatch } from "../types";
-import { IconBarcode, IconGear, IconMinus, IconPlus, IconSearch } from "../components/Icons";
+import { IconBarcode, IconGear, IconInventory, IconMinus, IconPlus, IconReceipt, IconSearch } from "../components/Icons";
 import Sheet from "../components/Sheet";
 import AlarmSheet, { ItemSettings } from "../components/AlarmSheet";
 import ThemeToggle from "../components/ThemeToggle";
@@ -15,8 +15,6 @@ type View = "items" | "receipts";
 interface InventoryScreenProps {
   items: Item[];
   receipts: Receipt[];
-  view: View;
-  onViewChange: (view: View) => void;
   onConsume: (id: string, amount: number) => void;
   onRestock: (id: string, amount: number) => void;
   onDelete: (id: string) => void;
@@ -29,13 +27,14 @@ interface InventoryScreenProps {
   onToggleTheme: () => void;
 }
 
-export default function InventoryScreen({ items, receipts, view, onViewChange, onConsume, onRestock, onDelete, onMatchItem, onUpdateItem, settings, models, onSaveSettings, theme, onToggleTheme }: InventoryScreenProps) {
+export default function InventoryScreen({ items, receipts, onConsume, onRestock, onDelete, onMatchItem, onUpdateItem, settings, models, onSaveSettings, theme, onToggleTheme }: InventoryScreenProps) {
   const [query, setQuery] = useState("");
   const [category, setCategory] = useState<string | null>(null);
   const [selected, setSelected] = useState<Item | null>(null);
   const [confirmDeleteFor, setConfirmDeleteFor] = useState<string | null>(null);
   const [alarmsOpen, setAlarmsOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [view, setView] = useState<View>("items");
   const twoPane = useMediaQuery("(min-width: 1180px)");
 
   const categories = useMemo(() => [...new Set(items.map((i) => i.category))], [items]);
@@ -234,6 +233,23 @@ export default function InventoryScreen({ items, receipts, view, onViewChange, o
       <header className="screen-header">
         <h1 className="screen-title">{view === "items" ? "Inventory" : "Receipts"}</h1>
         <div className="header-actions">
+          <button
+            className="btn btn-ghost btn-sm"
+            onClick={() => setView(view === "items" ? "receipts" : "items")}
+            title={view === "items" ? "Show the receipt inbox" : "Back to the item list"}
+          >
+            {view === "items" ? (
+              <>
+                <IconReceipt size={15} />
+                Receipts
+              </>
+            ) : (
+              <>
+                <IconInventory size={15} />
+                Items
+              </>
+            )}
+          </button>
           {view === "receipts" && (
             <button className="icon-btn" onClick={() => setSettingsOpen(true)} aria-label="Model settings">
               <IconGear size={19} />
@@ -242,15 +258,6 @@ export default function InventoryScreen({ items, receipts, view, onViewChange, o
           <ThemeToggle theme={theme} onToggle={onToggleTheme} />
         </div>
       </header>
-
-      <div className="segmented view-segmented">
-        <button className={view === "items" ? "active" : ""} onClick={() => onViewChange("items")}>
-          Items
-        </button>
-        <button className={view === "receipts" ? "active" : ""} onClick={() => onViewChange("receipts")}>
-          Receipts
-        </button>
-      </div>
 
       {view === "receipts" ? (
         <ReceiptsView receipts={receipts} onMatchItem={onMatchItem} />

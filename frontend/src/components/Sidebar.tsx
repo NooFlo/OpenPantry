@@ -1,10 +1,9 @@
 import type { Tab } from "../types";
-import { IconHome, IconInventory, IconMoon, IconReceipt, IconRecipe, IconSun } from "./Icons";
+import { IconHome, IconInventory, IconMoon, IconRecipe, IconSun } from "./Icons";
 
 const sections: { id: Tab; label: string; icon: (props: { size?: number }) => JSX.Element }[] = [
   { id: "home", label: "Home", icon: IconHome },
   { id: "inventory", label: "Inventory", icon: IconInventory },
-  { id: "receipts", label: "Receipts", icon: IconReceipt },
   { id: "recipes", label: "Recipes", icon: IconRecipe },
 ];
 

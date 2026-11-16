@@ -75,7 +75,7 @@ export interface ShoppingListEntry {
   unit: Unit;
 }
 
-export type Tab = "home" | "inventory" | "receipts" | "recipes";
+export type Tab = "home" | "inventory" | "recipes";
 
 export interface ModelChoice {
   provider: "local" | "cloud";

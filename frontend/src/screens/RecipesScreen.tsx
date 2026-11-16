@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import type { Item, ModelList, Recipe, Settings, SettingsPatch } from "../types";
-import { importRecipe, refreshRecipe } from "../api";
-import { maxPortions, missingCount, missingAmount, scaledAmount, ingredientInStock } from "../lib/cooking";
+import { importRecipe } from "../api";
+import { maxPortions, missingAmount, scaledAmount, ingredientInStock } from "../lib/cooking";
 import { isBinary } from "../lib/tracking";
 import { RECIPE_FILTERS, formatMinutes } from "../lib/tags";
 import { useMediaQuery } from "../lib/useMediaQuery";
@@ -14,7 +14,6 @@ import {
   IconGear,
   IconMinus,
   IconPlus,
-  IconRefresh,
   IconSearch,
 } from "../components/Icons";
 
@@ -32,8 +31,6 @@ interface RecipesScreenProps {
   portions: number;
   onPortionsChange: (p: number) => void;
   onImport: (recipe: Recipe) => void;
-  onRefresh: (recipe: Recipe) => void;
-  onCook: (recipe: Recipe) => void;
   onAddMissing: (recipe: Recipe) => Promise<void>;
   onMatchIngredient: (recipeId: string, ingredientId: string, itemName: string) => void;
   settings: Settings;
@@ -49,8 +46,6 @@ export default function RecipesScreen({
   portions,
   onPortionsChange,
   onImport,
-  onRefresh,
-  onCook,
   onAddMissing,
   onMatchIngredient,
   settings,
@@ -68,12 +63,12 @@ export default function RecipesScreen({
   const [query, setQuery] = useState("");
   const [activeFilters, setActiveFilters] = useState<string[]>([]);
   const [sort, setSort] = useState<Sort>("newest");
-  const [refreshingId, setRefreshingId] = useState<string | null>(null);
   const [addingId, setAddingId] = useState<string | null>(null);
   const [addedId, setAddedId] = useState<string | null>(null);
+  const [detailTab, setDetailTab] = useState<"ingredients" | "recipe">("ingredients");
+  const [activeStep, setActiveStep] = useState<number | null>(null);
 
   const selected = recipes.find((r) => r.id === selectedId) ?? null;
-  const selectedMissing = selected ? missingCount(selected, items, portions) : 0;
   const twoPane = useMediaQuery("(min-width: 1180px)");
 
   const filterChips = useMemo(() => {
@@ -137,18 +132,6 @@ export default function RecipesScreen({
     );
   };
 
-  const doRefresh = async (recipe: Recipe) => {
-    if (refreshingId) return;
-    setRefreshingId(recipe.id);
-    try {
-      const updated = await refreshRecipe(recipe.id);
-      onRefresh(updated);
-      setSelectedId(updated.id);
-    } finally {
-      setRefreshingId(null);
-    }
-  };
-
   const doAddMissing = async (recipe: Recipe) => {
     if (addingId === recipe.id || addedId === recipe.id) return;
     setAddingId(recipe.id);
@@ -163,111 +146,208 @@ export default function RecipesScreen({
     }
   };
 
-  const detail = selected ? (
-    <>
-      {selected.imageUrl && <img className="sheet-hero" src={selected.imageUrl} alt="" />}
-      <h2 className="sheet-title">{selected.title}</h2>
-      <p className="sheet-sub">{selected.source}</p>
+  const detail = selected ? (() => {
+    const sourceIsUrl = /^https?:\/\//.test(selected.source);
 
-      <RecipeMeta recipe={selected} />
+    // per-ingredient stock state, grouped for the Ingredients tab
+    type RowState = "ok" | "missing" | "unmapped" | "staple";
+    const rows = selected.ingredients.map((ing) => {
+      const item = ing.itemId ? items.find((i) => i.id === ing.itemId) : undefined;
+      const req = scaledAmount(ing, selected, portions);
+      let state: RowState = "staple";
+      let missing = 0;
+      if (ing.tracked) {
+        if (!item) state = "unmapped";
+        else if (ingredientInStock(ing, selected, portions, item)) state = "ok";
+        else {
+          state = "missing";
+          missing = !isBinary(item) && req != null ? missingAmount(ing, selected, portions, item) : 0;
+        }
+      }
+      return { ing, item, req, state, missing };
+    });
+    const missingRows = rows.filter((r) => r.state === "missing" || r.state === "unmapped");
+    const okRows = rows.filter((r) => r.state === "ok");
+    const stapleRows = rows.filter((r) => r.state === "staple");
+    const trackedCount = missingRows.length + okRows.length;
+    const stockPct = trackedCount > 0 ? Math.round((okRows.length / trackedCount) * 100) : 100;
+    const round2 = (n: number) => Math.round(n * 100) / 100;
 
-      <div className="qty-stepper">
-        <button onClick={() => onPortionsChange(Math.max(1, portions - 1))} aria-label="Fewer portions">
-          <IconMinus size={18} />
-        </button>
-        <span className="value">{portions} portions</span>
-        <button onClick={() => onPortionsChange(Math.min(12, portions + 1))} aria-label="More portions">
-          <IconPlus size={18} />
-        </button>
-      </div>
+    const advanceStep = () => {
+      const last = selected.steps.length - 1;
+      if (activeStep == null) setActiveStep(0);
+      else if (activeStep >= last) setActiveStep(null);
+      else setActiveStep(activeStep + 1);
+    };
 
-      <div className="ing-list">
-        {selected.ingredients.map((ing) => {
-          const item = ing.itemId ? items.find((i) => i.id === ing.itemId) : undefined;
-          const req = scaledAmount(ing, selected, portions);
-          const satisfied = item && ing.tracked ? ingredientInStock(ing, selected, portions, item) : false;
-          const missing = item && ing.tracked && !satisfied && req != null && !isBinary(item)
-            ? missingAmount(ing, selected, portions, item)
-            : 0;
-          const rowState = !ing.tracked ? "" : satisfied ? " in-stock" : " not-in-stock";
-          return (
-            <div key={ing.id} className={`ing-row${rowState}`}>
-              {ing.tracked && (
-                <span className={satisfied ? "ing-check checked" : "ing-check"} aria-hidden="true">
-                  {satisfied && <IconCheck size={12} />}
+    const stepLabel =
+      activeStep == null ? "Start cooking" : activeStep >= selected.steps.length - 1 ? "Finish" : "Next step";
+
+    return (
+      <>
+        {selected.imageUrl && <img className="sheet-hero" src={selected.imageUrl} alt="" />}
+        <h2 className="sheet-title">{selected.title}</h2>
+        <p className="sheet-sub">{selected.source}</p>
+
+        <RecipeMeta recipe={selected} />
+
+        <div className="detail-tabs">
+          <div className="detail-tabs-row">
+            <button
+              className={detailTab === "ingredients" ? "dtab active" : "dtab"}
+              onClick={() => setDetailTab("ingredients")}
+            >
+              Ingredients
+            </button>
+            <button
+              className={detailTab === "recipe" ? "dtab active" : "dtab"}
+              onClick={() => setDetailTab("recipe")}
+            >
+              Recipe
+            </button>
+            {sourceIsUrl && (
+              <button
+                className="dtab"
+                onClick={() => window.open(selected.source, "_blank", "noopener")}
+                title="Open the recipe's source webpage"
+              >
+                Webpage <span className="dtab-link">&#8599;</span>
+              </button>
+            )}
+          </div>
+          <div className="detail-tab-band" aria-hidden="true" />
+        </div>
+
+        {detailTab === "ingredients" ? (
+          <>
+            <div className="qty-stepper">
+              <button onClick={() => onPortionsChange(Math.max(1, portions - 1))} aria-label="Fewer portions">
+                <IconMinus size={18} />
+              </button>
+              <span className="value">{portions} portions</span>
+              <button onClick={() => onPortionsChange(Math.min(12, portions + 1))} aria-label="More portions">
+                <IconPlus size={18} />
+              </button>
+            </div>
+
+            <div className="stock-summary">
+              <div className="stock-summary-row">
+                <span className="stock-label">Pantry check</span>
+                <span className="stock-value">
+                  {okRows.length} of {trackedCount} in stock
                 </span>
-              )}
-              <div className="ing-main">
-                <div className="ing-name">{item ? item.name : ing.raw}</div>
-                {!item && ing.tracked && (
-                  <div className="ing-actions">
-                    {ing.suggestion ? (
-                      <span className="suggestion">
-                        {ing.suggestion}
-                        <button
-                          aria-label={`Accept ${ing.suggestion}`}
-                          onClick={() => onMatchIngredient(selected.id, ing.id, ing.suggestion!)}
-                        >
-                          <IconCheck size={13} />
-                        </button>
-                      </span>
-                    ) : (
-                      <button className="btn btn-ghost btn-sm">Match</button>
-                    )}
-                  </div>
-                )}
               </div>
-              <div className="ing-right">
-                {item && req != null && <span className="ing-qty">{req} {item.unit}</span>}
-                {!ing.tracked && <div className="ing-status always">always in stock</div>}
-                {item && ing.tracked && !satisfied && (
-                  <div className="ing-status lacking">
-                    {isBinary(item) ? "not in stock" : `missing ${Math.round(missing * 100) / 100} ${item.unit}`}
-                  </div>
-                )}
-                {item && ing.tracked && satisfied && <div className="ing-status ok">in stock</div>}
+              <div className="stock-bar">
+                <div className="stock-bar-fill" style={{ width: `${stockPct}%` }} />
               </div>
             </div>
-          );
-        })}
-      </div>
 
-      <h3 className="sheet-h3">Steps</h3>
-      <ol className="steps">
-        {selected.steps.map((step, i) => (
-          <li key={i}>{step}</li>
-        ))}
-      </ol>
+            {missingRows.length > 0 && (
+              <>
+                <div className="ing-group-header missing">
+                  <span className="dot" aria-hidden="true" />
+                  Missing &middot; {missingRows.length}
+                  <span className="spacer" />
+                  <button
+                    className={addedId === selected.id ? "btn btn-sm added" : "btn btn-primary btn-sm"}
+                    onClick={() => doAddMissing(selected)}
+                  >
+                    {addedId === selected.id ? "Added" : "Add to list"}
+                  </button>
+                </div>
+                {missingRows.map(({ ing, item, req, state, missing }) => (
+                  <div key={ing.id} className="ing-card missing">
+                    <span className="ing-icon" aria-hidden="true">{state === "unmapped" ? "?" : "!"}</span>
+                    <div className="ing-main">
+                      <div className="ing-name">{item ? item.name : ing.raw}</div>
+                      <div className="ing-sub">
+                        {state === "unmapped"
+                          ? "not in your pantry yet"
+                          : item && isBinary(item)
+                            ? `need ${req} ${item.unit}`
+                            : `need ${req} ${item?.unit} \u00B7 have ${round2(item?.quantity ?? 0)} ${item?.unit}`}
+                      </div>
+                      {state === "unmapped" && ing.suggestion && (
+                        <div className="ing-actions">
+                          <span className="suggestion">
+                            {ing.suggestion}
+                            <button
+                              aria-label={`Accept ${ing.suggestion}`}
+                              onClick={() => onMatchIngredient(selected.id, ing.id, ing.suggestion!)}
+                            >
+                              <IconCheck size={13} />
+                            </button>
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                    {state === "unmapped" ? (
+                      ing.suggestion ? undefined : <button className="btn btn-ghost btn-sm">Match</button>
+                    ) : (
+                      <span className="ing-pill lacking">
+                        {item && !isBinary(item) ? `missing ${round2(missing)} ${item.unit}` : "not in stock"}
+                      </span>
+                    )}
+                  </div>
+                ))}
+              </>
+            )}
 
-      <div className="sheet-actions">
-        {selected.source.startsWith("http") && (
-          <button
-            className="btn btn-ghost"
-            disabled={refreshingId === selected.id}
-            onClick={() => doRefresh(selected)}
-            title="Re-import tags, times and image from the source"
-          >
-            <IconRefresh size={15} />
-            {refreshingId === selected.id ? "Refreshing…" : "Refresh"}
-          </button>
+            {okRows.length > 0 && (
+              <>
+                <div className="ing-group-header ok">
+                  <span className="dot" aria-hidden="true" />
+                  In stock &middot; {okRows.length}
+                </div>
+                {okRows.map(({ ing, item, req }) => (
+                  <div key={ing.id} className="ing-card ok">
+                    <span className="ing-check-circle" aria-hidden="true">
+                      <IconCheck size={12} />
+                    </span>
+                    <div className="ing-main">
+                      <div className="ing-name">{item!.name}</div>
+                      {req != null && <div className="ing-sub">need {req} {item!.unit}</div>}
+                    </div>
+                    <span className="ing-pill ok">in stock</span>
+                  </div>
+                ))}
+              </>
+            )}
+
+            {stapleRows.length > 0 && stapleRows.map(({ ing }) => (
+              <div key={ing.id} className="ing-card staple">
+                <span className="ing-icon" aria-hidden="true" />
+                <div className="ing-main">
+                  <div className="ing-name">{ing.raw}</div>
+                </div>
+                <div className="ing-status always">always in stock</div>
+              </div>
+            ))}
+          </>
+        ) : (
+          <>
+            <h3 className="sheet-h3">Steps</h3>
+            <div className="step-cards">
+              {selected.steps.map((step, i) => (
+                <button
+                  key={i}
+                  className={activeStep === i ? "step-card active" : "step-card"}
+                  onClick={() => setActiveStep(activeStep === i ? null : i)}
+                  aria-pressed={activeStep === i}
+                >
+                  <span className="step-num">{i + 1}</span>
+                  <span className="step-text">{step}</span>
+                </button>
+              ))}
+            </div>
+            <button className="btn btn-primary btn-block next-step-btn" onClick={advanceStep}>
+              {stepLabel} <span className="next-arrow" aria-hidden="true">&#8594;</span>
+            </button>
+          </>
         )}
-        {selectedMissing > 0 && (
-          <button
-            className={addedId === selected.id ? "btn btn-primary added" : "btn btn-primary"}
-            onClick={() => doAddMissing(selected)}
-          >
-            {addedId === selected.id ? "Added" : "Add missing to shopping list"}
-          </button>
-        )}
-        <button
-          className={selectedMissing > 0 ? "btn btn-ghost" : "btn btn-primary"}
-          onClick={() => onCook(selected)}
-        >
-          Cooked this
-        </button>
-      </div>
-    </>
-  ) : null;
+      </>
+    );
+  })() : null;
 
   return (
     <div className="screen">
@@ -365,7 +445,10 @@ export default function RecipesScreen({
           <button
             key={recipe.id}
             className={`card recipe-card${cookable ? "" : " dim"}${selectedId === recipe.id ? " selected" : ""}`}
-            onClick={() => setSelectedId(recipe.id)}
+            onClick={() => {
+              setSelectedId(recipe.id);
+              setActiveStep(null);
+            }}
           >
             {recipe.imageUrl ? (
               <span className="recipe-photo-wrap">

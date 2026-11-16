@@ -5,7 +5,6 @@ import {
   addToShoppingList,
   confirmLow,
   consumeItem,
-  cookRecipe,
   deleteItem,
   fetchItems,
   fetchModels,
@@ -141,32 +140,6 @@ export default function App() {
     updateItem(id, patch).catch(console.error);
   };
 
-  const cook = (recipe: Recipe) => {
-    setItems((prev) =>
-      prev.map((item) => {
-        const usedIngredients = recipe.ingredients.filter(
-          (ing) => ing.tracked && ing.itemId === item.id && ing.amount != null
-        );
-        if (usedIngredients.length === 0) return item;
-        if (item.trackingMode === "binary") {
-          // binary: the amount stays on record, the running-low prompt appears
-          return { ...item, uncertain: item.quantity > 0 ? true : item.uncertain };
-        }
-        const used = usedIngredients.reduce(
-          (sum, ing) => sum + ((ing.amount ?? 0) * portions) / recipe.basePortions,
-          0
-        );
-        if (used <= 0) return item;
-        const quantity = Math.max(0, Math.round((item.quantity - used) * 1000) / 1000);
-        return { ...item, quantity, uncertain: quantity <= item.minQuantity ? true : item.uncertain };
-      })
-    );
-    cookRecipe(recipe.id, portions)
-      .then(() => fetchShoppingList())
-      .then(setShoppingList)
-      .catch(console.error);
-  };
-
   const toggleShoppingList = (id: string) => {
     const item = items.find((i) => i.id === id);
     if (!item) return;
@@ -206,10 +179,6 @@ export default function App() {
     setRecipes((prev) => [...prev, recipe]);
   };
 
-  const refreshRecipeInState = (recipe: Recipe) => {
-    setRecipes((prev) => prev.map((r) => (r.id === recipe.id ? recipe : r)));
-  };
-
   const matchIngredient = (recipeId: string, ingredientId: string, itemName: string) => {
     matchRecipeIngredient(recipeId, ingredientId, itemName)
       .then((updated) => {
@@ -240,12 +209,10 @@ export default function App() {
             onToggleTheme={toggleTheme}
           />
         )}
-        {(tab === "inventory" || tab === "receipts") && (
+        {tab === "inventory" && (
           <InventoryScreen
             items={items}
             receipts={receipts}
-            view={tab === "receipts" ? "receipts" : "items"}
-            onViewChange={(v) => setTab(v === "receipts" ? "receipts" : "inventory")}
             onConsume={consume}
             onRestock={restock}
             onDelete={removeItem}
@@ -265,8 +232,6 @@ export default function App() {
             portions={portions}
             onPortionsChange={setPortions}
             onImport={importRecipeToState}
-            onRefresh={refreshRecipeInState}
-            onCook={cook}
             onAddMissing={addMissing}
             onMatchIngredient={matchIngredient}
             settings={settings}
@@ -277,7 +242,7 @@ export default function App() {
           />
         )}
       </main>
-      <TabBar active={tab === "receipts" ? "inventory" : tab} onChange={setTab} />
+      <TabBar active={tab} onChange={setTab} />
     </div>
   );
 }
