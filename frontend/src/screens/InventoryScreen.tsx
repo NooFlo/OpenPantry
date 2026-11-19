@@ -13,6 +13,14 @@ import { formatStock, isBinary, isLow, isInStock } from "../lib/tracking";
 
 type View = "items" | "receipts";
 
+/** Sub line of an item's detail header: the primary EAN, or a count when the
+ *  item carries several product barcodes. */
+function eanLine(item: Item) {
+  if (item.barcodes && item.barcodes.length > 1)
+    return ` · ${item.barcodes.length} EANs`;
+  return item.barcode ? ` · ${item.barcode}` : "";
+}
+
 interface InventoryScreenProps {
   items: Item[];
   receipts: Receipt[];
@@ -119,7 +127,7 @@ export default function InventoryScreen({ items, receipts, onConsume, onRestock,
           <h2 className="sheet-title">{selectedLive.name}</h2>
           <p className="sheet-sub">
             {selectedLive.category}
-            {selectedLive.barcode ? ` · ${selectedLive.barcode}` : ""}
+            {eanLine(selectedLive)}
           </p>
         </div>
       ) : (
@@ -128,7 +136,7 @@ export default function InventoryScreen({ items, receipts, onConsume, onRestock,
             <h2 className="sheet-title">{selectedLive.name}</h2>
             <p className="sheet-sub">
               {selectedLive.category}
-              {selectedLive.barcode ? ` · ${selectedLive.barcode}` : ""}
+              {eanLine(selectedLive)}
             </p>
           </div>
           {alarmsOpen ? <span className="chevron up" aria-hidden /> : <span className="chevron" aria-hidden />}
