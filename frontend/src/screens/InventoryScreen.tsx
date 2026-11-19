@@ -5,6 +5,7 @@ import Sheet from "../components/Sheet";
 import AlarmSheet, { ItemSettings } from "../components/AlarmSheet";
 import ThemeToggle from "../components/ThemeToggle";
 import ModelSettingsSheet from "../components/ModelSettingsSheet";
+import LabelsSheet from "../components/LabelsSheet";
 import NfcLinkBlock from "../components/NfcLinkBlock";
 import ReceiptsView from "./ReceiptsView";
 import { useMediaQuery } from "../lib/useMediaQuery";
@@ -34,6 +35,7 @@ export default function InventoryScreen({ items, receipts, onConsume, onRestock,
   const [confirmDeleteFor, setConfirmDeleteFor] = useState<string | null>(null);
   const [alarmsOpen, setAlarmsOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [labelsOpen, setLabelsOpen] = useState(false);
   const [view, setView] = useState<View>("items");
   const twoPane = useMediaQuery("(min-width: 1180px)");
 
@@ -255,6 +257,11 @@ export default function InventoryScreen({ items, receipts, onConsume, onRestock,
               <IconGear size={19} />
             </button>
           )}
+          {view === "items" && (
+            <button className="icon-btn" onClick={() => setLabelsOpen(true)} aria-label="Labels and barcodes">
+              <IconBarcode size={19} />
+            </button>
+          )}
           <ThemeToggle theme={theme} onToggle={onToggleTheme} />
         </div>
       </header>
@@ -301,6 +308,14 @@ export default function InventoryScreen({ items, receipts, onConsume, onRestock,
           llmAvailable={models.llmAvailable}
           onSave={onSaveSettings}
           onClose={() => setSettingsOpen(false)}
+        />
+      )}
+
+      {labelsOpen && (
+        <LabelsSheet
+          items={items}
+          selected={selectedLive}
+          onClose={() => setLabelsOpen(false)}
         />
       )}
     </div>

@@ -1,6 +1,8 @@
+import { useEffect, useState } from "react";
 import type { Item, ItemPatch } from "../types";
 import Sheet from "./Sheet";
 import StepperRow, { stepSize } from "./StepperRow";
+import { IconBarcode, IconCheck } from "./Icons";
 import { isBinary } from "../lib/tracking";
 
 interface ItemSettingsProps {
@@ -18,6 +20,11 @@ export function ItemSettings({ item, onUpdate }: ItemSettingsProps) {
   const step = stepSize(item.unit);
   const minBuy = item.unit === "pcs" ? 1 : 0.1;
   const binary = isBinary(item);
+
+  const [barcodeDraft, setBarcodeDraft] = useState(item.barcode ?? "");
+  useEffect(() => setBarcodeDraft(item.barcode ?? ""), [item.id, item.barcode]);
+
+  const saveBarcode = () => onUpdate(item.id, { barcode: barcodeDraft.trim() });
 
   const stepAlarm = (direction: -1 | 1) => {
     const next = Math.max(0, round(item.minQuantity + direction * step));
@@ -71,6 +78,26 @@ export function ItemSettings({ item, onUpdate }: ItemSettingsProps) {
         min={minBuy}
         onStep={stepBuy}
       />
+
+      <div>
+        <p className="sheet-sub">
+          <IconBarcode size={14} /> Product barcode — the USB scanner uses it to
+          track this item. Clear the field to remove the mapping.
+        </p>
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <input
+            className="import-input"
+            style={{ marginBottom: 0, fontFamily: "monospace" }}
+            inputMode="numeric"
+            placeholder="e.g. 4006434000937"
+            value={barcodeDraft}
+            onChange={(e) => setBarcodeDraft(e.target.value)}
+          />
+          <button className="icon-btn" aria-label="Save barcode" onClick={saveBarcode}>
+            <IconCheck size={18} />
+          </button>
+        </div>
+      </div>
     </>
   );
 }

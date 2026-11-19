@@ -93,9 +93,13 @@ def best_name_match(name: str, min_ratio: float = 0.75) -> dict | None:
     return best
 
 
+_UNSET = object()
+
+
 def update_item(item_id: str, min_quantity: float | None = None,
                 package_size: float | None = None,
-                tracking_mode: str | None = None) -> dict | None:
+                tracking_mode: str | None = None,
+                barcode: object = _UNSET) -> dict | None:
     with get_db() as db:
         if min_quantity is not None:
             db.execute("UPDATE items SET min_quantity = ? WHERE id = ?", (min_quantity, item_id))
@@ -103,6 +107,10 @@ def update_item(item_id: str, min_quantity: float | None = None,
             db.execute("UPDATE items SET package_size = ? WHERE id = ?", (package_size, item_id))
         if tracking_mode is not None:
             db.execute("UPDATE items SET tracking_mode = ? WHERE id = ?", (tracking_mode, item_id))
+        if barcode is not _UNSET:
+            # an empty value clears the barcode mapping (None in the DB)
+            db.execute("UPDATE items SET barcode = ? WHERE id = ?",
+                       (barcode or None, item_id))
     return get_item(item_id)
 
 

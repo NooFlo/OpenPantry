@@ -1,15 +1,16 @@
 import logging
+import io
 import re
 from contextlib import asynccontextmanager
 from pathlib import Path
 
 import httpx
-from fastapi import FastAPI, HTTPException
-from fastapi.responses import HTMLResponse, PlainTextResponse
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import HTMLResponse, PlainTextResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import extract, hass, mail, products, repo, seed, telemetry
+from . import extract, hass, labels, mail, products, repo, seed, telemetry
 from .config import get_cloud_config, get_model_choice, set_model_choice
 from .db import init_db
 
@@ -73,6 +74,7 @@ class ItemUpdateRequest(BaseModel):
     min_quantity: float | None = None
     package_size: float | None = None
     tracking_mode: str | None = None
+    barcode: str | None = None
 
 
 class ShoppingListRequest(BaseModel):
@@ -206,15 +208,9 @@ def scan_barcode(body: BarcodeRequest):
 # Control-code stickers for the USB scanner: scan one of these EAN-13 codes in
 # the GS1 in-store reserved range (20xxxxxxxxxx — no real product can collide)
 # to switch what subsequent product scans do. GET /print/control-codes renders
-# them as printable barcodes.
-CONTROL_CODES = {
-    "bought": {"code": "2000000000008", "label": "BOUGHT",
-                "hint": "Scanned items are restocked (+1 package)"},
-    "empty": {"code": "2000000000015", "label": "EMPTY / TRASH",
-              "hint": "Scanned items go to zero and land on the shopping list"},
-    "consume": {"code": "2000000000022", "label": "CONSUME",
-                "hint": "Back to the default: one package used up"},
-}
+# them as printable barcodes; constants live in labels.py (single source of
+# truth for the scanner bridge, the print page and the Epson label export).
+CONTROL_CODES = labels.CONTROL_CODES
 
 
 @app.post("/api/scan/purchase")
@@ -355,7 +351,19 @@ def update_item(item_id: str, body: ItemUpdateRequest):
         raise HTTPException(400, "package_size must be > 0")
     if body.tracking_mode is not None and body.tracking_mode not in ("binary", "qty"):
         raise HTTPException(400, "tracking_mode must be 'binary' or 'qty'")
-    item = repo.update_item(item_id, body.min_quantity, body.package_size, body.tracking_mode)
+    new_barcode = None
+    if body.barcode is not None:
+        cleaned = re.sub(r"\D", "", body.barcode)
+        if body.barcode.strip():
+            if len(cleaned) != len(body.barcode.strip()) or not 6 <= len(cleaned) <= 14:
+                raise HTTPException(400, "barcode must be 6-14 digits")
+            clash = repo.find_item_by_barcode(cleaned)
+            if clash and clash["id"] != item_id:
+                raise HTTPException(409, f"barcode already used by {clash['name']}")
+            new_barcode = cleaned
+        # an empty barcode clears the mapping
+    item = repo.update_item(item_id, body.min_quantity, body.package_size,
+                            body.tracking_mode, barcode=new_barcode)
     if not item:
         raise HTTPException(404, "item not found")
     return camelize(item)
@@ -644,6 +652,50 @@ def tag_empty(item_id: str):
         raise HTTPException(404, "item not found")
     _push_to_ha()
     return f"{item['name']}: empty — added to the shopping list."
+
+
+@app.get("/api/labels/item/{item_id}/png")
+def item_label_png(item_id: str, request: Request, tape: int = 24):
+    """Label preview PNG: QR (consume link) + name (+ product barcode on 24 mm)."""
+    item = repo.get_item(item_id)
+    if not item:
+        raise HTTPException(404, "item not found")
+    image = labels.item_label(item, str(request.base_url), tape)
+    buffer = io.BytesIO()
+    image.save(buffer, format="PNG")
+    return Response(content=buffer.getvalue(), media_type="image/png")
+
+
+@app.get("/api/labels/items.lemd")
+def item_labels_lemd(request: Request, ids: str, tape: int = 24):
+    """Epson Label Editor mobile strip for inventory labels ('Ids' comma-
+    separated); separated by dashed cut marks, imported in the Epson app."""
+    images = []
+    for item_id in [part.strip() for part in ids.split(",") if part.strip()]:
+        item = repo.get_item(item_id)
+        if not item:
+            raise HTTPException(404, f"item not found: {item_id}")
+        images.append(labels.item_label(item, str(request.base_url), tape))
+    if not images:
+        raise HTTPException(400, "no item ids given")
+    return _lemd_response(labels.generate_lemd(images, tape), "openpantry-labels.lemd")
+
+
+@app.get("/api/labels/control-codes.lemd")
+def control_codes_lemd(request: Request, tape: int = 24):
+    """Epson strip with the three scanner control-code stickers."""
+    images = [img for img, _, _ in labels.control_code_labels(tape)]
+    if not images:
+        raise HTTPException(500, "control codes could not be rendered")
+    return _lemd_response(labels.generate_lemd(images, tape), "openpantry-control-codes.lemd")
+
+
+def _lemd_response(payload: str, filename: str) -> Response:
+    return Response(
+        content=payload,
+        media_type="application/json",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @app.get("/api/health")

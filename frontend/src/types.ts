@@ -20,6 +20,7 @@ export interface ItemPatch {
   min_quantity?: number;
   package_size?: number;
   tracking_mode?: TrackingMode;
+  barcode?: string;
 }
 
 export interface Ingredient {
