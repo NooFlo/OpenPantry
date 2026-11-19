@@ -9,7 +9,7 @@ from fastapi.responses import HTMLResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import extract, hass, mail, repo, seed, telemetry
+from . import extract, hass, mail, products, repo, seed, telemetry
 from .config import get_cloud_config, get_model_choice, set_model_choice
 from .db import init_db
 
@@ -54,6 +54,15 @@ class RestockRequest(BaseModel):
 
 class BarcodeRequest(BaseModel):
     barcode: str
+
+
+class BarcodeAssignRequest(BaseModel):
+    barcode: str
+    item_id: str | None = None
+    item_name: str | None = None
+    category: str | None = None
+    package_size: float | None = None
+    unit: str | None = None
 
 
 class ConfirmLowRequest(BaseModel):
@@ -192,6 +201,72 @@ def scan_barcode(body: BarcodeRequest):
         raise HTTPException(404, "unknown barcode")
     _push_to_ha()
     return camelize(repo.consume_item(item["id"], item["package_size"]))
+
+
+def _clean_barcode(raw: str) -> str:
+    barcode = re.sub(r"\D", "", raw)
+    if not 6 <= len(barcode) <= 14:
+        raise HTTPException(400, "invalid barcode")
+    return barcode
+
+
+@app.post("/api/barcode/lookup")
+def barcode_lookup(body: BarcodeRequest):
+    """Scan preprocessing: a known barcode reports its item; an unknown one is
+    looked up on Open Food Facts (and its sister projects), cached, and paired
+    with generic-catalog suggestions for the review queue."""
+    barcode = _clean_barcode(body.barcode)
+    item = repo.find_item_by_barcode(barcode)
+    if item:
+        return {"status": "known", "item": camelize(item)}
+    product = products.product_info(barcode)
+    if not product:
+        return {"status": "not_found", "barcode": barcode}
+    return {
+        "status": "unknown",
+        "product": camelize(product),
+        "suggestions": camelize(products.suggest_items(product)),
+    }
+
+
+@app.get("/api/barcode/pending")
+def barcode_pending():
+    return {"barcodes": camelize(products.pending_barcodes())}
+
+
+@app.post("/api/barcode/assign")
+def barcode_assign(body: BarcodeAssignRequest):
+    """Confirm a barcode mapping: attach it to an existing item, or register a
+    new catalog item (package size defaults from the cached OFF product)."""
+    barcode = _clean_barcode(body.barcode)
+    if not body.item_id and not (body.item_name or "").strip():
+        raise HTTPException(400, "item_id or item_name is required")
+    item = None
+    if body.item_id:
+        item = repo.set_item_barcode(body.item_id, barcode)
+        if not item:
+            raise HTTPException(404, "item not found")
+    else:
+        package_size, unit = body.package_size, body.unit
+        if package_size is None or unit is None:
+            product = products.product_info(barcode) or {}
+            parsed = products.parse_quantity(product.get("quantity"))
+            if package_size is None:
+                package_size = parsed[0] if parsed else 1.0
+            if unit is None:
+                unit = parsed[1] if parsed else "pcs"
+        existing = repo.find_item_by_name(body.item_name.strip())
+        if existing:
+            item = repo.set_item_barcode(existing["id"], barcode) or repo.get_item(existing["id"])
+        else:
+            item = repo.create_item(
+                name=body.item_name.strip(),
+                category=body.category or "Pantry",
+                unit=unit or "pcs",
+                package_size=package_size or 1.0,
+                barcode=barcode,
+            )
+    return camelize(item)
 
 
 @app.post("/api/items/{item_id}/update")

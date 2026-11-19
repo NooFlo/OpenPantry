@@ -49,6 +49,12 @@ def find_item_by_barcode(barcode: str) -> dict | None:
     return dict(row) if row else None
 
 
+def set_item_barcode(item_id: str, barcode: str) -> dict | None:
+    with get_db() as db:
+        db.execute("UPDATE items SET barcode = ? WHERE id = ?", (barcode, item_id))
+    return get_item(item_id)
+
+
 def create_item(name: str, category: str = "Pantry", unit: str = "pcs",
                 package_size: float = 1.0, barcode: str | None = None,
                 tracking_mode: str = "binary") -> dict:

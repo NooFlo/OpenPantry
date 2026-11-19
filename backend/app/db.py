@@ -79,6 +79,18 @@ CREATE TABLE IF NOT EXISTS settings (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS barcode_cache (
+    barcode TEXT PRIMARY KEY,
+    status TEXT NOT NULL DEFAULT 'found',
+    name TEXT,
+    brand TEXT,
+    quantity TEXT,
+    image_url TEXT,
+    categories_json TEXT NOT NULL DEFAULT '[]',
+    source TEXT,
+    fetched_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
 """
 
 
