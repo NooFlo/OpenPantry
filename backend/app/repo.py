@@ -348,12 +348,20 @@ def get_recipe(recipe_id: str) -> dict | None:
 
 
 def _ingredients_for(recipe_id: str) -> list[dict]:
+    # rowid order: alternative-group members are inserted adjacently, so the
+    # group stays together in the source list's position
     with get_db() as db:
         rows = db.execute(
-            "SELECT id, raw, amount, unit, item_id, tracked, suggestion FROM ingredients WHERE recipe_id = ?",
+            "SELECT id, raw, amount, unit, item_id, tracked, suggestion, alt_group, selected"
+            " FROM ingredients WHERE recipe_id = ? ORDER BY rowid",
             (recipe_id,),
         ).fetchall()
-    return [dict(r) for r in rows]
+    out = []
+    for r in rows:
+        ing = dict(r)
+        ing["selected"] = bool(ing["selected"])
+        out.append(ing)
+    return out
 
 
 def _steps(steps_json: str) -> list[str]:
@@ -368,10 +376,12 @@ def _steps(steps_json: str) -> list[str]:
 def _insert_ingredients(db, recipe_id: str, ingredients: list[dict]):
     for ing in ingredients:
         db.execute(
-            "INSERT INTO ingredients (id, recipe_id, raw, amount, unit, item_id, tracked, suggestion)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO ingredients (id, recipe_id, raw, amount, unit, item_id, tracked, suggestion,"
+            " alt_group, selected)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (new_id(), recipe_id, ing.get("raw", ""), ing.get("amount"), ing.get("unit"),
-             ing.get("item_id"), 1 if ing.get("tracked", True) else 0, ing.get("suggestion")),
+             ing.get("item_id"), 1 if ing.get("tracked", True) else 0, ing.get("suggestion"),
+             ing.get("alt_group"), 1 if ing.get("selected") else 0),
         )
 
 
@@ -392,6 +402,40 @@ def create_recipe(title: str, source: str, base_portions: float,
         )
         _insert_ingredients(db, recipe_id, ingredients)
     return get_recipe(recipe_id)
+
+
+def update_recipe(recipe_id: str, title: str | None = None, source: str | None = None,
+                  base_portions: float | None = None, steps: list[str] | None = None,
+                  ingredients: list[dict] | None = None) -> dict | None:
+    """Manual recipe edit: update only the given fields; meta (tags, times,
+    image) and the creation date stay untouched. `ingredients` replaces the
+    whole list (entries carry item matches / alt groups to preserve)."""
+    with get_db() as db:
+        exists = db.execute("SELECT 1 FROM recipes WHERE id = ?", (recipe_id,)).fetchone()
+        if not exists:
+            return None
+        if title is not None:
+            db.execute("UPDATE recipes SET title = ? WHERE id = ?", (title, recipe_id))
+        if source is not None:
+            db.execute("UPDATE recipes SET source = ? WHERE id = ?", (source, recipe_id))
+        if base_portions is not None:
+            db.execute("UPDATE recipes SET base_portions = ? WHERE id = ?", (base_portions, recipe_id))
+        if steps is not None:
+            db.execute("UPDATE recipes SET steps_json = ? WHERE id = ?", (json.dumps(steps), recipe_id))
+        if ingredients is not None:
+            db.execute("DELETE FROM ingredients WHERE recipe_id = ?", (recipe_id,))
+            _insert_ingredients(db, recipe_id, ingredients)
+    return get_recipe(recipe_id)
+
+
+def delete_recipe(recipe_id: str) -> bool:
+    with get_db() as db:
+        exists = db.execute("SELECT 1 FROM recipes WHERE id = ?", (recipe_id,)).fetchone()
+        if not exists:
+            return False
+        db.execute("DELETE FROM ingredients WHERE recipe_id = ?", (recipe_id,))
+        db.execute("DELETE FROM recipes WHERE id = ?", (recipe_id,))
+    return True
 
 
 def replace_recipe(recipe_id: str, title: str, source: str, base_portions: float,
@@ -424,6 +468,36 @@ def match_recipe_ingredient(recipe_id: str, ingredient_id: str, item_id: str, am
             (item_id, amount, ingredient_id, recipe_id),
         )
     return get_recipe(recipe_id)
+
+
+def select_recipe_ingredient(recipe_id: str, ingredient_id: str) -> dict | None:
+    """Pick one option of an and/or alternative group ("basmati rice or
+    naan"): marks it selected and clears the flag on its group siblings."""
+    with get_db() as db:
+        row = db.execute(
+            "SELECT alt_group FROM ingredients WHERE id = ? AND recipe_id = ?",
+            (ingredient_id, recipe_id),
+        ).fetchone()
+        if not row:
+            return None
+        if row["alt_group"]:
+            db.execute(
+                "UPDATE ingredients SET selected = CASE WHEN id = ? THEN 1 ELSE 0 END"
+                " WHERE recipe_id = ? AND alt_group = ?",
+                (ingredient_id, recipe_id, row["alt_group"]),
+            )
+        else:
+            db.execute("UPDATE ingredients SET selected = 1 WHERE id = ?", (ingredient_id,))
+    return get_recipe(recipe_id)
+
+
+def _chosen_group_member(ing: dict, all_ingredients: list[dict]) -> dict | None:
+    """The one group member that counts for shopping/cooking: the user's
+    pick, or None while the group hasn't been decided yet."""
+    if not ing.get("alt_group"):
+        return ing
+    choices = [i for i in all_ingredients if i.get("alt_group") == ing["alt_group"]]
+    return next((i for i in choices if i.get("selected")), None)
 
 
 def list_shopping_list() -> list[dict]:
@@ -501,27 +575,40 @@ def _ingredient_amount(ing: dict) -> float:
 def add_missing_to_shopping_list(recipe: dict, items_by_id: dict, portions: float) -> list[dict]:
     base = recipe["base_portions"] or 1
     with get_db() as db:
+        seen_groups = set()
         for ing in recipe["ingredients"]:
+            group = ing.get("alt_group")
+            effective = ing
+            if group:
+                if group in seen_groups:
+                    continue
+                seen_groups.add(group)
+                # and/or group: only the picked option goes on the list,
+                # an undecided group waits until one option is selected
+                effective = _chosen_group_member(ing, recipe["ingredients"])
+                if effective is None:
+                    continue
             # anything goes on the list as long as it's quantifiable
-            # (no measurable amount and no number in the raw line -> skip)
-            if ing["amount"] is None and not re.findall(r"\d+(?:[.,]\d+)?", ing["raw"] or ""):
+            # (no measurable amount and no number in the raw line -> skip);
+            # a picked alternative always buys its package, amount or not
+            if not group and effective["amount"] is None and not re.findall(r"\d+(?:[.,]\d+)?", effective["raw"] or ""):
                 continue
-            item = items_by_id.get(ing["item_id"]) if ing["item_id"] else None
-            if item is None and ing["item_id"]:
+            item = items_by_id.get(effective["item_id"]) if effective["item_id"] else None
+            if item is None and effective["item_id"]:
                 continue
-            amount = _ingredient_amount(ing)
+            amount = _ingredient_amount(effective)
             if item is None:
-                name = (ing["suggestion"] or ing["raw"] or "").strip()
+                name = (effective["suggestion"] or effective["raw"] or "").strip()
                 if not name:
                     continue
-                item = _match_or_create_item(db, name, ing["unit"])
+                item = _match_or_create_item(db, name, effective["unit"])
                 db.execute(
                     "UPDATE ingredients SET item_id = ?, amount = ?, suggestion = NULL, tracked = 1"
                     " WHERE id = ?",
-                    (item["id"], amount, ing["id"]),
+                    (item["id"], amount, effective["id"]),
                 )
-            elif ing["amount"] is None:
-                db.execute("UPDATE ingredients SET amount = ? WHERE id = ?", (amount, ing["id"]))
+            elif effective["amount"] is None:
+                db.execute("UPDATE ingredients SET amount = ? WHERE id = ?", (amount, effective["id"]))
             if item["tracking_mode"] == "binary":
                 # binary: any not-in-stock item goes on the list as one buy
                 # amount; the recipe requirement is not compared numerically
@@ -555,7 +642,14 @@ def add_missing_to_shopping_list(recipe: dict, items_by_id: dict, portions: floa
 def cook_recipe(recipe: dict, portions: float) -> list[dict]:
     base = recipe["base_portions"] or 1
     with get_db() as db:
+        seen_groups = set()
         for ing in recipe["ingredients"]:
+            if ing.get("alt_group"):
+                # cook deducts the picked option only ("rice or naan");
+                # an undecided group stays untouched
+                if ing["alt_group"] in seen_groups or not ing.get("selected"):
+                    continue
+                seen_groups.add(ing["alt_group"])
             if not ing["item_id"] or ing["amount"] is None:
                 continue
             used = ing["amount"] * portions / base

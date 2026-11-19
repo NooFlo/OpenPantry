@@ -1,4 +1,4 @@
-import type { Item, ItemPatch, ModelList, Receipt, Recipe, Settings, SettingsPatch, ShoppingListEntry } from "./types";
+import type { Item, ItemPatch, ModelList, Receipt, Recipe, RecipeEditPatch, Settings, SettingsPatch, ShoppingListEntry } from "./types";
 
 const BASE = "/api";
 
@@ -89,6 +89,24 @@ export function matchRecipeIngredient(recipeId: string, ingredientId: string, it
     method: "POST",
     body: JSON.stringify({ item_name: itemName }),
   });
+}
+
+export function selectRecipeIngredient(recipeId: string, ingredientId: string): Promise<Recipe> {
+  return request<Recipe>(`/recipes/${recipeId}/ingredients/${ingredientId}/select`, {
+    method: "POST",
+    body: "{}",
+  });
+}
+
+export function editRecipe(recipeId: string, patch: RecipeEditPatch): Promise<Recipe> {
+  return request<Recipe>(`/recipes/${recipeId}`, {
+    method: "PATCH",
+    body: JSON.stringify(patch),
+  });
+}
+
+export function deleteRecipe(recipeId: string): Promise<{ deleted: boolean }> {
+  return request<{ deleted: boolean }>(`/recipes/${recipeId}`, { method: "DELETE" });
 }
 
 export function fetchSettings(): Promise<Settings> {

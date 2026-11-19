@@ -117,6 +117,25 @@ SEED_RECIPES = [
         ],
     },
     {
+        "title": "Kichererbsen-Curry",
+        "source": "pasted",
+        "base_portions": 4,
+        "ingredients": [
+            {"raw": "2 Dosen Kichererbsen", "amount": 2, "item": "kichererbsen", "tracked": True},
+            {"raw": "2 Dosen Kokosmilch", "amount": 2, "item": "kokosmilch", "tracked": True},
+            {"raw": "1 Zwiebel", "amount": 1, "item": "zwiebeln", "tracked": True},
+            {"raw": "1 TL Paprikapulver", "tracked": True},
+            # and/or alternative: served with rice or naan, pick what to buy
+            {"raw": "Basmatireis", "item": "reis", "tracked": True, "alt_group": "curry-side"},
+            {"raw": "Naan", "tracked": True, "alt_group": "curry-side"},
+        ],
+        "steps": [
+            "Sauté diced onion, add paprika and curry spices.",
+            "Add coconut milk and chickpeas, simmer for 15 minutes.",
+            "Serve with basmati rice or naan.",
+        ],
+    },
+    {
         "title": "Bauernfrühstück",
         "source": "pasted",
         "base_portions": 2,
@@ -201,6 +220,8 @@ def seed_if_empty():
         for ing in recipe["ingredients"]:
             entry = {"raw": ing["raw"], "amount": ing.get("amount"), "tracked": ing.get("tracked", True),
                      "suggestion": ing.get("suggestion")}
+            if ing.get("alt_group"):
+                entry["alt_group"] = ing["alt_group"]
             if ing.get("item"):
                 entry["item_id"] = ing["item"]
             ingredients.append(entry)

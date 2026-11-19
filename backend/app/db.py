@@ -65,7 +65,9 @@ CREATE TABLE IF NOT EXISTS ingredients (
     unit TEXT,
     item_id TEXT REFERENCES items(id),
     tracked INTEGER NOT NULL DEFAULT 1,
-    suggestion TEXT
+    suggestion TEXT,
+    alt_group TEXT,
+    selected INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS shopping_list (
@@ -120,6 +122,12 @@ def init_db():
         columns = {row["name"] for row in db.execute("PRAGMA table_info(ingredients)")}
         if "unit" not in columns:
             db.execute("ALTER TABLE ingredients ADD COLUMN unit TEXT")
+        # and/or alternative groups: members share alt_group; the picked
+        # option is marked selected=1 (exactly one per group)
+        if "alt_group" not in columns:
+            db.execute("ALTER TABLE ingredients ADD COLUMN alt_group TEXT")
+        if "selected" not in columns:
+            db.execute("ALTER TABLE ingredients ADD COLUMN selected INTEGER NOT NULL DEFAULT 0")
         recipe_columns = {row["name"] for row in db.execute("PRAGMA table_info(recipes)")}
         additions = {
             "prep_minutes": "REAL",

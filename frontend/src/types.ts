@@ -31,6 +31,10 @@ export interface Ingredient {
   itemId?: string;
   tracked: boolean;
   suggestion?: string;
+  /** shared id of an "and/or" alternative group ("rice or naan") */
+  altGroup?: string;
+  /** the picked option of its group; only it is shopped/deducted */
+  selected?: boolean;
 }
 
 export interface Recipe {
@@ -51,6 +55,21 @@ export interface Recipe {
 }
 
 export type ReceiptStatus = "processing" | "review" | "done";
+
+/** Manual recipe edit: one ingredient line from the edit form. An `id`
+ *  present in the recipe with an unchanged `raw` keeps its match. */
+export interface RecipeEditIngredient {
+  id?: string;
+  raw: string;
+}
+
+export interface RecipeEditPatch {
+  title?: string;
+  source?: string;
+  base_portions?: number;
+  ingredients?: RecipeEditIngredient[];
+  steps?: string[];
+}
 
 export interface ReceiptItem {
   id: string;

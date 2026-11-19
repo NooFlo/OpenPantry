@@ -2,6 +2,7 @@ import json
 import re
 import shutil
 import subprocess
+import uuid
 
 import httpx
 
@@ -124,6 +125,69 @@ def base_ingredient_name(name: str) -> str:
 def needs_name_canonicalization(name: str) -> bool:
     return bool(PREP_HINT_RE.search(base_ingredient_name(name)))
 
+
+# "Basmati rice and/or naan to serve" -> ["Basmati rice", "Naan"]:
+# one slot in the recipe satisfied by either option. Splitters cover
+# English/German "and/or" spellings including the mistyped "and or".
+ALT_SPLIT_RE = re.compile(
+    r"\s+(?:and\s*/\s*or|and\s+or|und\s*/\s*oder|und\s+oder|or|oder)\s+",
+    re.IGNORECASE,
+)
+# trailing serving/garnish notes suggested by the option, not the pantry item
+SERVE_SUFFIX_RE = re.compile(
+    r"\s*\b(?:to\s+serve|to\s+garnish|to\s+taste|to\s+accompany|zum\s+servieren|nach\s+geschmack)\b\s*.*$",
+    re.IGNORECASE,
+)
+
+
+def strip_markdown(line: str) -> str:
+    """Remove emphasis markers web recipes carry into extracted text (**bold**)."""
+    return line.replace("*", "").strip()
+
+
+def _clean_alternative_part(part: str) -> str:
+    part = re.sub(r"\([^)]*\)", " ", part)
+    part = SERVE_SUFFIX_RE.sub("", part)
+    part = re.sub(r"\s+", " ", part).strip(" ,-–—")
+    if part:
+        part = part[0].upper() + part[1:]
+    return part
+
+
+def split_alternative_names(name: str) -> list[str]:
+    """Split a raw ingredient name into its and/or alternatives.
+
+    Returns [] when the name is not a genuine alternative ("salt and
+    pepper" stays one line: plain "and" means both items are needed).
+    """
+    name = strip_markdown(name or "")
+    if not ALT_SPLIT_RE.search(name):
+        return []
+    parts = [_clean_alternative_part(p) for p in ALT_SPLIT_RE.split(name)]
+    parts = [p for p in parts if len(re.findall(r"[^\W\d_]", p, re.UNICODE)) >= 2]
+    return parts if len(parts) >= 2 else []
+
+
+def expand_alternatives(ingredients: list[dict]) -> list[dict]:
+    """Replace and/or ingredient lines with their options as separate
+    entries sharing an alt_group id: exactly one of them is meant to be
+    bought/served. Non-splitting lines pass through unchanged."""
+    out: list[dict] = []
+    for ing in ingredients:
+        parts = split_alternative_names(ing.get("name") or ing.get("raw") or "")
+        if len(parts) >= 2:
+            group = uuid.uuid4().hex[:12]
+            for part in parts:
+                alt = dict(ing)
+                alt["raw"] = part
+                alt["name"] = part
+                alt["alt_group"] = group
+                out.append(alt)
+        else:
+            out.append(ing)
+    return out
+
+
 HEADER_RE = re.compile(r"^(zutaten|ingredients|servings|preparation|zubereitung)\b|^\W*for \d+ (portions|servings)", re.IGNORECASE)
 PORTIONS_RE = re.compile(r"(?:für|for)\s*(\d+)\s*(?:portionen|portions|servings)", re.IGNORECASE)
 
@@ -147,7 +211,8 @@ def to_base_unit(amount: float, unit: str | None) -> tuple[float, str] | None:
 
 
 def parse_ingredient_line(line: str) -> dict | None:
-    line = _replace_fractions(line.strip())
+    line = strip_markdown(line.strip())
+    line = _replace_fractions(line)
     match = INGREDIENT_RE.match(line)
     if not match:
         return None
@@ -293,6 +358,11 @@ def heuristic_recipe(text: str, source: str = "pasted", image_url: str | None = 
         parsed = parse_ingredient_line(line)
         if parsed and not STEP_HINTS.search(line):
             ingredients.append(parsed)
+        elif ALT_SPLIT_RE.search(line) and not STEP_HINTS.search(line):
+            # "Basmati rice and/or naan to serve": no measurable amount, but
+            # a valid (alternative) ingredient — kept rather than lost to steps
+            clean = strip_markdown(line)
+            ingredients.append({"raw": clean, "amount": None, "unit": None, "name": clean})
         elif len(line) > 15:
             steps.append(line)
     title = "Imported recipe"
@@ -302,7 +372,7 @@ def heuristic_recipe(text: str, source: str = "pasted", image_url: str | None = 
         "title": title,
         "source": source,
         "base_portions": base_portions,
-        "ingredients": ingredients,
+        "ingredients": expand_alternatives(ingredients),
         "steps": steps,
     }
     if image_url:
@@ -343,11 +413,12 @@ def _schema_to_recipe(node: dict, url: str) -> dict:
             base_portions = float(numbers[0])
     ingredients = []
     for raw in node.get("recipeIngredient") or []:
-        parsed = parse_ingredient_line(str(raw))
+        clean = strip_markdown(str(raw))
+        parsed = parse_ingredient_line(clean)
         if parsed:
             ingredients.append(parsed)
         else:
-            ingredients.append({"raw": str(raw), "amount": None, "unit": None, "name": str(raw)})
+            ingredients.append({"raw": clean, "amount": None, "unit": None, "name": clean})
     steps = []
     raw_steps = node.get("recipeInstructions") or []
     if isinstance(raw_steps, str):
@@ -371,7 +442,7 @@ def _schema_to_recipe(node: dict, url: str) -> dict:
         "title": str(node.get("name") or "Imported recipe"),
         "source": url,
         "base_portions": base_portions,
-        "ingredients": ingredients,
+        "ingredients": expand_alternatives(ingredients),
         "steps": steps,
     }
     recipe.update(recipe_meta_from_schema(node))
@@ -405,15 +476,16 @@ def llm_recipe(text: str, source: str, choice: dict | None = None, cloud: dict |
     if not isinstance(data, dict) or "ingredients" not in data:
         return None
     ingredients = []
-    for ing in data.get("ingredients", []):
+    for ing in data.get("ingredients") or []:
         if not isinstance(ing, dict):
             continue
         ingredients.append({
-            "raw": str(ing.get("raw") or ing.get("name") or ""),
+            "raw": strip_markdown(str(ing.get("raw") or ing.get("name") or "")),
             "amount": ing.get("amount"),
             "unit": ing.get("unit") if ing.get("unit") in ("g", "kg", "ml", "l", "pcs") else None,
-            "name": str(ing.get("name") or ing.get("raw") or ""),
+            "name": strip_markdown(str(ing.get("name") or ing.get("raw") or "")),
         })
+    ingredients = expand_alternatives(ingredients)
 
     def _minutes(value):
         if isinstance(value, (int, float)) and value > 0:
@@ -429,7 +501,7 @@ def llm_recipe(text: str, source: str, choice: dict | None = None, cloud: dict |
         "source": source,
         "base_portions": float(data.get("basePortions") or 4),
         "ingredients": ingredients,
-        "steps": [str(s) for s in data.get("steps", [])],
+        "steps": [str(s) for s in (data.get("steps") or [])],
         "prep_minutes": prep,
         "cook_minutes": cook,
         "total_minutes": total,

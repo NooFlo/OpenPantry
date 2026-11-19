@@ -168,3 +168,20 @@ export function IconNfc(props: IconProps) {
     </Svg>
   );
 }
+
+export function IconPencil(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" />
+    </Svg>
+  );
+}
+
+export function IconX(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <path d="M6 6l12 12" />
+      <path d="M18 6 6 18" />
+    </Svg>
+  );
+}

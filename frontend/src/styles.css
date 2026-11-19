@@ -684,6 +684,117 @@ input {
   color: var(--ok);
 }
 
+/* ---------- and/or alternative groups ("basmati rice or naan") ---------- */
+.alt-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.alt-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 5px 11px;
+  border-radius: 999px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--text-2);
+  transition: all 120ms ease;
+}
+
+.alt-chip:hover {
+  border-color: var(--text-3);
+  color: var(--text);
+}
+
+.alt-chip.selected {
+  background: var(--accent-soft);
+  border-color: transparent;
+  color: var(--accent);
+}
+
+.alt-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  border: 1.5px solid var(--text-3);
+  flex: none;
+}
+
+.alt-chip.selected .alt-dot {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.alt-state {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-3);
+}
+
+.alt-state.ok {
+  color: var(--ok);
+}
+
+/* ---------- recipe edit mode ---------- */
+
+.detail-actions {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.edit-form {
+  display: flex;
+  flex-direction: column;
+}
+
+.edit-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-2);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin: 12px 0 6px;
+}
+
+.edit-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+.edit-row .edit-input {
+  margin-bottom: 0;
+  flex: 1;
+}
+
+.edit-remove {
+  flex: none;
+  margin-top: 4px;
+  color: var(--text-3);
+}
+
+.edit-remove:hover {
+  color: var(--danger);
+  border-color: var(--danger);
+}
+
+.edit-add {
+  margin-top: 6px;
+  align-self: flex-start;
+}
+
+.edit-form .qty-stepper {
+  margin: 0 0 4px;
+}
+
 /* ---------- recipe detail: step cards ---------- */
 
 .step-cards {

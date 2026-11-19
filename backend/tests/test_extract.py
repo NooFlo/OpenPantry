@@ -213,3 +213,50 @@ def test_normalize_tags_drops_seo_phrases():
         exclude="Chicken teriyaki",
     )
     assert tags == ["Dinner", "Japanese", "Chicken", "Quick"]
+
+
+def test_split_alternative_names_and_or():
+    from app.extract import split_alternative_names
+    # the Andy Cooks-style bolded side note, including the mistyped "and or"
+    assert split_alternative_names("**Basmati rice and or naan to serve**") == ["Basmati rice", "Naan"]
+    assert split_alternative_names("Reis und/oder Nudeln") == ["Reis", "Nudeln"]
+    assert split_alternative_names("soy sauce or hoisin") == ["Soy sauce", "Hoisin"]
+    # plain "and" means both items are needed: no alternative group
+    assert split_alternative_names("salt and pepper") == []
+    assert split_alternative_names("Orange marmalade") == []
+
+
+def test_expand_alternatives_groups_members():
+    from app.extract import expand_alternatives
+    ingredients = [
+        {"raw": "500 g Mehl", "amount": 0.5, "unit": "kg", "name": "Mehl"},
+        {"raw": "**Basmati rice and/or naan to serve**", "amount": None, "unit": None,
+         "name": "**Basmati rice and/or naan to serve**"},
+    ]
+    expanded = expand_alternatives(ingredients)
+    assert len(expanded) == 3
+    assert "alt_group" not in expanded[0]
+    rice, naan = expanded[1], expanded[2]
+    assert rice["alt_group"] == naan["alt_group"]
+    assert rice["raw"] == "Basmati rice"
+    assert naan["raw"] == "Naan"
+    assert rice["amount"] is None and naan["amount"] is None
+
+
+def test_expand_alternatives_keeps_amount():
+    from app.extract import expand_alternatives
+    expanded = expand_alternatives([
+        {"raw": "2 EL soy sauce or hoisin", "amount": None, "unit": None, "name": "soy sauce or hoisin"},
+    ])
+    assert len(expanded) == 2
+    assert all(e["alt_group"] == expanded[0]["alt_group"] for e in expanded)
+
+
+def test_heuristic_recipe_splits_alternative_line_without_amount():
+    text = "Curry\n500 g Mehl\n**Basmati rice and/or naan to serve**\nAlles verrühren."
+    recipe = heuristic_recipe(text)
+    rice = next(i for i in recipe["ingredients"] if i["raw"] == "Basmati rice")
+    naan = next(i for i in recipe["ingredients"] if i["raw"] == "Naan")
+    assert rice["alt_group"] == naan["alt_group"]
+    # the and/or side line is an ingredient, not lost to the steps
+    assert not any("naan" in s.lower() for s in recipe["steps"])

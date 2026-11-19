@@ -1,11 +1,13 @@
 import { useEffect, useState } from "react";
-import type { Item, ItemPatch, ModelList, Recipe, Receipt, Settings, SettingsPatch, ShoppingListEntry, Tab } from "./types";
+import type { Item, ItemPatch, ModelList, Recipe, RecipeEditPatch, Receipt, Settings, SettingsPatch, ShoppingListEntry, Tab } from "./types";
 import {
   addMissingToShoppingList,
   addToShoppingList,
   confirmLow,
   consumeItem,
   deleteItem,
+  deleteRecipe,
+  editRecipe,
   fetchItems,
   fetchModels,
   fetchReceipts,
@@ -17,6 +19,7 @@ import {
   pushShoppingList,
   removeFromShoppingList,
   restockItem,
+  selectRecipeIngredient,
   updateItem,
   updateSettings,
 } from "./api";
@@ -189,6 +192,22 @@ export default function App() {
       .catch(console.error);
   };
 
+  const saveRecipeEdit = (recipeId: string, patch: RecipeEditPatch) =>
+    editRecipe(recipeId, patch).then((updated) => {
+      setRecipes((prev) => prev.map((r) => (r.id === updated.id ? updated : r)));
+    });
+
+  const removeRecipe = (recipeId: string) =>
+    deleteRecipe(recipeId).then(() => {
+      setRecipes((prev) => prev.filter((r) => r.id !== recipeId));
+    });
+
+  const selectIngredient = (recipeId: string, ingredientId: string) => {
+    selectRecipeIngredient(recipeId, ingredientId)
+      .then((updated) => setRecipes((prev) => prev.map((r) => (r.id === updated.id ? updated : r))))
+      .catch(console.error);
+  };
+
   const toggleTheme = () => setTheme(theme === "dark" ? "light" : "dark");
 
   return (
@@ -234,6 +253,9 @@ export default function App() {
             onImport={importRecipeToState}
             onAddMissing={addMissing}
             onMatchIngredient={matchIngredient}
+            onSelectIngredient={selectIngredient}
+            onSaveRecipeEdit={saveRecipeEdit}
+            onDeleteRecipe={removeRecipe}
             settings={settings}
             models={models}
             onSaveSettings={saveSettings}

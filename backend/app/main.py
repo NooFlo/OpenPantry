@@ -98,6 +98,19 @@ class IngredientMatchRequest(BaseModel):
     item_name: str
 
 
+class RecipeEditIngredientRequest(BaseModel):
+    id: str | None = None
+    raw: str
+
+
+class RecipeEditRequest(BaseModel):
+    title: str | None = None
+    source: str | None = None
+    base_portions: float | None = None
+    ingredients: list[RecipeEditIngredientRequest] | None = None
+    steps: list[str] | None = None
+
+
 class ModelChoiceRequest(BaseModel):
     provider: str
     model: str
@@ -469,6 +482,8 @@ def _ingredient_entry(ing: dict, canon: dict[str, str]) -> dict:
     name = canon.get(name, name)
     entry = {"raw": ing["raw"], "amount": ing.get("amount"), "unit": ing.get("unit"),
              "tracked": True, "suggestion": None}
+    if ing.get("alt_group"):
+        entry["alt_group"] = ing["alt_group"]
     if name.lower() in ALWAYS_AVAILABLE:
         entry["tracked"] = False
         return entry
@@ -552,6 +567,79 @@ def match_ingredient(recipe_id: str, ingredient_id: str, body: IngredientMatchRe
         numbers = re.findall(r"\d+(?:[.,]\d+)?", ingredient["raw"])
         amount = float(numbers[0].replace(",", ".")) if numbers else 1.0
     return camelize(repo.match_recipe_ingredient(recipe_id, ingredient_id, item["id"], amount))
+
+
+@app.post("/api/recipes/{recipe_id}/ingredients/{ingredient_id}/select")
+def select_ingredient(recipe_id: str, ingredient_id: str):
+    """Pick one option of an "and/or" alternative group (e.g. basmati rice
+    or naan): the pick is what goes on the shopping list when it's missing."""
+    if not repo.get_recipe(recipe_id):
+        raise HTTPException(404, "recipe not found")
+    recipe = repo.select_recipe_ingredient(recipe_id, ingredient_id)
+    if not recipe:
+        raise HTTPException(404, "ingredient not found")
+    return camelize(recipe)
+
+
+def _edited_ingredients(recipe: dict, edits: list) -> list[dict]:
+    """Rebuild the ingredient list from an edit form:
+    - lines whose raw text is unchanged keep their item match, tracking
+      flag and and/or alternative group untouched
+    - changed or new lines re-run the deterministic part of the import
+      matching pipeline (parsing, amount extraction, alternative
+      splitting, name matching and suggestions)
+    """
+    old = {i["id"]: i for i in recipe["ingredients"]}
+    entries: list[dict] = []
+    for edit in edits:
+        raw = extract.strip_markdown((edit.raw or "").strip())
+        if not raw:
+            continue
+        prior = old.get(edit.id) if edit.id else None
+        if prior and prior["raw"] == raw:
+            entries.append({
+                "raw": prior["raw"], "amount": prior["amount"], "unit": prior.get("unit"),
+                "item_id": prior.get("item_id"), "tracked": bool(prior["tracked"]),
+                "suggestion": prior.get("suggestion"), "alt_group": prior.get("alt_group"),
+                "selected": bool(prior["selected"]),
+            })
+            continue
+        parsed = extract.parse_ingredient_line(raw)
+        base = parsed or {"raw": raw, "amount": None, "unit": None, "name": raw}
+        for alt in extract.expand_alternatives([base]):
+            entries.append(_ingredient_entry(alt, {}))
+    # a group reduced to a single option is a plain line again
+    counts: dict[str, int] = {}
+    for entry in entries:
+        if entry.get("alt_group"):
+            counts[entry["alt_group"]] = counts.get(entry["alt_group"], 0) + 1
+    for entry in entries:
+        if entry.get("alt_group") and counts[entry["alt_group"]] < 2:
+            entry["alt_group"] = None
+    return entries
+
+
+@app.patch("/api/recipes/{recipe_id}")
+def edit_recipe(recipe_id: str, body: RecipeEditRequest):
+    """Manual recipe edit: title, source, base portions, ingredient lines
+    and steps. Unchanged ingredient lines keep their pantry matches."""
+    recipe = _get_recipe_or_404(recipe_id)
+    if body.title is not None and not body.title.strip():
+        raise HTTPException(422, "title must not be empty")
+    if body.base_portions is not None and body.base_portions <= 0:
+        raise HTTPException(422, "base portions must be a positive number")
+    ingredients = _edited_ingredients(recipe, body.ingredients) if body.ingredients is not None else None
+    title = body.title.strip() if body.title is not None else None
+    updated = repo.update_recipe(recipe_id, title, body.source, body.base_portions,
+                                  body.steps, ingredients)
+    return camelize(updated)
+
+
+@app.delete("/api/recipes/{recipe_id}")
+def delete_recipe(recipe_id: str):
+    if not repo.delete_recipe(recipe_id):
+        raise HTTPException(404, "recipe not found")
+    return {"deleted": True}
 
 
 @app.get("/api/shopping-list")

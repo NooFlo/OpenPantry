@@ -1,5 +1,5 @@
-import { useMemo, useState } from "react";
-import type { Item, ModelList, Recipe, Settings, SettingsPatch } from "../types";
+import { Fragment, useMemo, useState } from "react";
+import type { Ingredient, Item, ModelList, Recipe, RecipeEditPatch, Settings, SettingsPatch } from "../types";
 import { importRecipe } from "../api";
 import { maxPortions, missingAmount, scaledAmount, ingredientInStock } from "../lib/cooking";
 import { isBinary } from "../lib/tracking";
@@ -13,8 +13,10 @@ import {
   IconClock,
   IconGear,
   IconMinus,
+  IconPencil,
   IconPlus,
   IconSearch,
+  IconX,
 } from "../components/Icons";
 
 type Sort = "newest" | "quickest" | "az";
@@ -33,11 +35,23 @@ interface RecipesScreenProps {
   onImport: (recipe: Recipe) => void;
   onAddMissing: (recipe: Recipe) => Promise<void>;
   onMatchIngredient: (recipeId: string, ingredientId: string, itemName: string) => void;
+  onSelectIngredient: (recipeId: string, ingredientId: string) => void;
+  onSaveRecipeEdit: (recipeId: string, patch: RecipeEditPatch) => Promise<unknown>;
+  onDeleteRecipe: (recipeId: string) => Promise<unknown>;
   settings: Settings;
   models: ModelList;
   onSaveSettings: (patch: SettingsPatch) => void;
   theme: "light" | "dark";
   onToggleTheme: () => void;
+}
+
+/** Draft of a recipe being edited: plain text everything, sent to the API. */
+interface RecipeDraft {
+  title: string;
+  source: string;
+  basePortions: number;
+  ingredients: { id?: string; raw: string }[];
+  steps: string[];
 }
 
 export default function RecipesScreen({
@@ -48,6 +62,9 @@ export default function RecipesScreen({
   onImport,
   onAddMissing,
   onMatchIngredient,
+  onSelectIngredient,
+  onSaveRecipeEdit,
+  onDeleteRecipe,
   settings,
   models,
   onSaveSettings,
@@ -67,6 +84,8 @@ export default function RecipesScreen({
   const [addedId, setAddedId] = useState<string | null>(null);
   const [detailTab, setDetailTab] = useState<"ingredients" | "recipe">("ingredients");
   const [activeStep, setActiveStep] = useState<number | null>(null);
+  const [editState, setEditState] = useState<{ recipeId: string; draft: RecipeDraft } | null>(null);
+  const [savingEdit, setSavingEdit] = useState(false);
 
   const selected = recipes.find((r) => r.id === selectedId) ?? null;
   const twoPane = useMediaQuery("(min-width: 1180px)");
@@ -146,11 +165,64 @@ export default function RecipesScreen({
     }
   };
 
+  const editingDraft =
+    editState && selected && editState.recipeId === selected.id ? editState.draft : null;
+  const setDraft = (updater: (d: RecipeDraft) => RecipeDraft) =>
+    setEditState((prev) => (prev ? { ...prev, draft: updater(prev.draft) } : prev));
+
+  const startEditing = () => {
+    if (!selected) return;
+    setEditState({
+      recipeId: selected.id,
+      draft: {
+        title: selected.title,
+        source: selected.source,
+        basePortions: selected.basePortions,
+        ingredients: selected.ingredients.map((ing) => ({ id: ing.id, raw: ing.raw })),
+        steps: [...selected.steps],
+      },
+    });
+  };
+
+  const saveEditing = async () => {
+    if (!selected || !editingDraft || savingEdit) return;
+    const draft = editingDraft;
+    const ingredients = draft.ingredients.filter((ing) => ing.raw.trim() !== "");
+    if (!draft.title.trim() || ingredients.length === 0) return;
+    setSavingEdit(true);
+    try {
+      await onSaveRecipeEdit(selected.id, {
+        title: draft.title.trim(),
+        source: draft.source.trim(),
+        base_portions: draft.basePortions,
+        ingredients,
+        steps: draft.steps.filter((s) => s.trim() !== ""),
+      });
+      setEditState(null);
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setSavingEdit(false);
+    }
+  };
+
+  const deleteCurrentRecipe = () => {
+    if (!selected) return;
+    if (!window.confirm(`Delete "${selected.title}"? This cannot be undone.`)) return;
+    onDeleteRecipe(selected.id)
+      .then(() => {
+        setSelectedId(null);
+        setEditState(null);
+      })
+      .catch(console.error);
+  };
+
   const detail = selected ? (() => {
     const sourceIsUrl = /^https?:\/\//.test(selected.source);
 
     // per-ingredient stock state, grouped for the Ingredients tab
     type RowState = "ok" | "missing" | "unmapped" | "staple";
+    type Row = { ing: (typeof selected.ingredients)[number]; item?: Item; req?: number; state: RowState; missing: number };
     const rows = selected.ingredients.map((ing) => {
       const item = ing.itemId ? items.find((i) => i.id === ing.itemId) : undefined;
       const req = scaledAmount(ing, selected, portions);
@@ -166,12 +238,76 @@ export default function RecipesScreen({
       }
       return { ing, item, req, state, missing };
     });
-    const missingRows = rows.filter((r) => r.state === "missing" || r.state === "unmapped");
-    const okRows = rows.filter((r) => r.state === "ok");
-    const stapleRows = rows.filter((r) => r.state === "staple");
+
+    // display units: plain ingredients, plus "rice or naan" alternative
+    // groups rendered as one card whose options are pickable
+    type Unit =
+      | { kind: "single"; key: string; row: Row }
+      | { kind: "group"; key: string; rows: Row[] };
+    const units: Unit[] = [];
+    const seenGroups = new Set<string>();
+    selected.ingredients.forEach((ing, index) => {
+      if (ing.altGroup) {
+        if (seenGroups.has(ing.altGroup)) return;
+        seenGroups.add(ing.altGroup);
+        units.push({ kind: "group", key: ing.altGroup, rows: rows.filter((r) => r.ing.altGroup === ing.altGroup) });
+        return;
+      }
+      units.push({ kind: "single", key: ing.id, row: rows[index] });
+    });
+    const groupUnitState = (groupRows: Row[]): RowState => {
+      if (groupRows.every((r) => r.state === "staple")) return "staple";
+      if (groupRows.some((r) => r.state === "ok")) return "ok";
+      return "missing";
+    };
+    const missingRows = units.filter((u) =>
+      u.kind === "single" ? u.row.state === "missing" || u.row.state === "unmapped" : groupUnitState(u.rows) === "missing"
+    );
+    const okRows = units.filter((u) =>
+      u.kind === "single" ? u.row.state === "ok" : groupUnitState(u.rows) === "ok"
+    );
+    const stapleRows = units.filter((u) =>
+      u.kind === "single" ? u.row.state === "staple" : groupUnitState(u.rows) === "staple"
+    );
     const trackedCount = missingRows.length + okRows.length;
     const stockPct = trackedCount > 0 ? Math.round((okRows.length / trackedCount) * 100) : 100;
     const round2 = (n: number) => Math.round(n * 100) / 100;
+
+    const renderMissingRow = ({ ing, item, req, state, missing }: Row) => (
+      <div className="ing-card missing">
+        <span className="ing-icon" aria-hidden="true">{state === "unmapped" ? "?" : "!"}</span>
+        <div className="ing-main">
+          <div className="ing-name">{item ? item.name : ing.raw}</div>
+          <div className="ing-sub">
+            {state === "unmapped"
+              ? "not in your pantry yet"
+              : item && isBinary(item)
+                ? `need ${req} ${item.unit}`
+                : `need ${req} ${item?.unit} \u00B7 have ${round2(item?.quantity ?? 0)} ${item?.unit}`}
+          </div>
+          {state === "unmapped" && ing.suggestion && (
+            <div className="ing-actions">
+              <span className="suggestion">
+                {ing.suggestion}
+                <button
+                  aria-label={`Accept ${ing.suggestion}`}
+                  onClick={() => onMatchIngredient(selected.id, ing.id, ing.suggestion!)}
+                >
+                  <IconCheck size={13} />
+                </button>
+              </span>
+            </div>
+          )}
+        </div>
+        {state === "unmapped" ? (
+          ing.suggestion ? undefined : <button className="btn btn-ghost btn-sm">Match</button>
+        ) : (
+          <span className="ing-pill lacking">
+            {item && !isBinary(item) ? `missing ${round2(missing)} ${item.unit}` : "not in stock"}
+          </span>
+        )}
+      </div>
+    );
 
     const advanceStep = () => {
       const last = selected.steps.length - 1;
@@ -183,8 +319,42 @@ export default function RecipesScreen({
     const stepLabel =
       activeStep == null ? "Start cooking" : activeStep >= selected.steps.length - 1 ? "Finish" : "Next step";
 
+    const canSaveEditing =
+      editingDraft != null &&
+      editingDraft.title.trim() !== "" &&
+      editingDraft.ingredients.some((ing) => ing.raw.trim() !== "");
+
     return (
       <>
+        <div className="detail-actions">
+          {editingDraft ? (
+            <>
+              <button className="btn btn-ghost btn-sm" onClick={() => setEditState(null)} disabled={savingEdit}>
+                Cancel
+              </button>
+              <button className="btn btn-danger btn-sm" onClick={deleteCurrentRecipe} disabled={savingEdit}>
+                Delete
+              </button>
+              <button
+                className="btn btn-primary btn-sm"
+                onClick={saveEditing}
+                disabled={!canSaveEditing || savingEdit}
+              >
+                {savingEdit ? "Saving…" : "Save"}
+              </button>
+            </>
+          ) : (
+            <button className="btn btn-ghost btn-sm" onClick={startEditing}>
+              <IconPencil size={14} />
+              Edit
+            </button>
+          )}
+        </div>
+
+        {editingDraft ? (
+          <EditRecipeForm draft={editingDraft} setDraft={setDraft} />
+        ) : (
+        <>
         {selected.imageUrl && <img className="sheet-hero" src={selected.imageUrl} alt="" />}
         <h2 className="sheet-title">{selected.title}</h2>
         <p className="sheet-sub">{selected.source}</p>
@@ -255,41 +425,20 @@ export default function RecipesScreen({
                     {addedId === selected.id ? "Added" : "Add to list"}
                   </button>
                 </div>
-                {missingRows.map(({ ing, item, req, state, missing }) => (
-                  <div key={ing.id} className="ing-card missing">
-                    <span className="ing-icon" aria-hidden="true">{state === "unmapped" ? "?" : "!"}</span>
-                    <div className="ing-main">
-                      <div className="ing-name">{item ? item.name : ing.raw}</div>
-                      <div className="ing-sub">
-                        {state === "unmapped"
-                          ? "not in your pantry yet"
-                          : item && isBinary(item)
-                            ? `need ${req} ${item.unit}`
-                            : `need ${req} ${item?.unit} \u00B7 have ${round2(item?.quantity ?? 0)} ${item?.unit}`}
-                      </div>
-                      {state === "unmapped" && ing.suggestion && (
-                        <div className="ing-actions">
-                          <span className="suggestion">
-                            {ing.suggestion}
-                            <button
-                              aria-label={`Accept ${ing.suggestion}`}
-                              onClick={() => onMatchIngredient(selected.id, ing.id, ing.suggestion!)}
-                            >
-                              <IconCheck size={13} />
-                            </button>
-                          </span>
-                        </div>
-                      )}
-                    </div>
-                    {state === "unmapped" ? (
-                      ing.suggestion ? undefined : <button className="btn btn-ghost btn-sm">Match</button>
-                    ) : (
-                      <span className="ing-pill lacking">
-                        {item && !isBinary(item) ? `missing ${round2(missing)} ${item.unit}` : "not in stock"}
-                      </span>
-                    )}
-                  </div>
-                ))}
+                {missingRows.map((u) =>
+                  u.kind === "group" ? (
+                    <AltGroupCard
+                      key={u.key}
+                      rows={u.rows}
+                      bucket="missing"
+                      recipeId={selected.id}
+                      onMatch={onMatchIngredient}
+                      onSelect={onSelectIngredient}
+                    />
+                  ) : (
+                    <Fragment key={u.key}>{renderMissingRow(u.row)}</Fragment>
+                  )
+                )}
               </>
             )}
 
@@ -299,26 +448,45 @@ export default function RecipesScreen({
                   <span className="dot" aria-hidden="true" />
                   In stock &middot; {okRows.length}
                 </div>
-                {okRows.map(({ ing, item, req }) => (
-                  <div key={ing.id} className="ing-card ok">
-                    <span className="ing-check-circle" aria-hidden="true">
-                      <IconCheck size={12} />
-                    </span>
-                    <div className="ing-main">
-                      <div className="ing-name">{item!.name}</div>
-                      {req != null && <div className="ing-sub">need {req} {item!.unit}</div>}
-                    </div>
-                    <span className="ing-pill ok">in stock</span>
-                  </div>
-                ))}
+                {okRows.map((u) =>
+                  u.kind === "group" ? (
+                    <AltGroupCard
+                      key={u.key}
+                      rows={u.rows}
+                      bucket="ok"
+                      recipeId={selected.id}
+                      onMatch={onMatchIngredient}
+                      onSelect={onSelectIngredient}
+                    />
+                  ) : (
+                    <Fragment key={u.key}>
+                      <div className="ing-card ok">
+                        <span className="ing-check-circle" aria-hidden="true">
+                          <IconCheck size={12} />
+                        </span>
+                        <div className="ing-main">
+                          <div className="ing-name">{u.row.item!.name}</div>
+                          {u.row.req != null && (
+                            <div className="ing-sub">need {u.row.req} {u.row.item!.unit}</div>
+                          )}
+                        </div>
+                        <span className="ing-pill ok">in stock</span>
+                      </div>
+                    </Fragment>
+                  )
+                )}
               </>
             )}
 
-            {stapleRows.length > 0 && stapleRows.map(({ ing }) => (
-              <div key={ing.id} className="ing-card staple">
+            {stapleRows.length > 0 && stapleRows.map((u) => (
+              <div key={u.key} className="ing-card staple">
                 <span className="ing-icon" aria-hidden="true" />
                 <div className="ing-main">
-                  <div className="ing-name">{ing.raw}</div>
+                  <div className="ing-name">
+                    {u.kind === "group"
+                      ? u.rows.map((r) => r.ing.raw).join(" or ")
+                      : u.row.ing.raw}
+                  </div>
                 </div>
                 <div className="ing-status always">always in stock</div>
               </div>
@@ -344,6 +512,8 @@ export default function RecipesScreen({
               {stepLabel} <span className="next-arrow" aria-hidden="true">&#8594;</span>
             </button>
           </>
+        )}
+        </>
         )}
       </>
     );
@@ -553,6 +723,191 @@ export default function RecipesScreen({
           onClose={() => setSettingsOpen(false)}
         />
       )}
+    </div>
+  );
+}
+
+interface AltRow {
+  ing: Ingredient;
+  item?: Item;
+  state: "ok" | "missing" | "unmapped" | "staple";
+}
+
+interface AltGroupCardProps {
+  rows: AltRow[];
+  bucket: "missing" | "ok";
+  recipeId: string;
+  onMatch: (recipeId: string, ingredientId: string, itemName: string) => void;
+  onSelect: (recipeId: string, ingredientId: string) => void;
+}
+
+/** "Basmati rice or naan": and/or alternatives from one source line.
+ *  Exactly one option is the pick — it is the one that goes on the
+ *  shopping list when it's empty and the one cooking deducts. */
+function AltGroupCard({ rows, bucket, recipeId, onMatch, onSelect }: AltGroupCardProps) {
+  const label = rows.map((r) => r.item?.name ?? r.ing.raw).join(" or ");
+  const hasPick = rows.some((r) => r.ing.selected);
+  const optionLabel = (r: AltRow) =>
+    r.state === "ok" ? "in stock" : r.state === "unmapped" ? "unmapped" : "not in stock";
+  const pickable = rows.filter((r) => r.state !== "staple");
+  return (
+    <div className={`ing-card alt-group ${bucket}`}>
+      <span className={bucket === "ok" ? "ing-check-circle" : "ing-icon"} aria-hidden="true">
+        {bucket === "ok" ? <IconCheck size={12} /> : "!"}
+      </span>
+      <div className="ing-main">
+        <div className="ing-name">{label}</div>
+        <div className="alt-options" role="group" aria-label={`Pick one: ${label}`}>
+          {pickable.map((r) => (
+            <button
+              key={r.ing.id}
+              className={r.ing.selected ? "alt-chip selected" : "alt-chip"}
+              onClick={() => onSelect(recipeId, r.ing.id)}
+              aria-pressed={Boolean(r.ing.selected)}
+              title={optionLabel(r)}
+            >
+              <span className="alt-dot" aria-hidden="true" />
+              <span className="alt-name">{r.item?.name ?? r.ing.raw}</span>
+              <span className={r.state === "ok" ? "alt-state ok" : "alt-state"}>{optionLabel(r)}</span>
+            </button>
+          ))}
+        </div>
+        <div className="ing-sub">
+          {hasPick
+            ? "the pick goes on the list when it's empty"
+            : bucket === "ok"
+              ? "serve with whichever you like"
+              : "pick which one to buy"}
+        </div>
+        {rows
+          .filter((r) => r.state === "unmapped" && r.ing.suggestion)
+          .map((r) => (
+            <div className="ing-actions" key={r.ing.id}>
+              <span className="suggestion">
+                {r.ing.suggestion}
+                <button
+                  aria-label={`Accept ${r.ing.suggestion}`}
+                  onClick={() => onMatch(recipeId, r.ing.id, r.ing.suggestion!)}
+                >
+                  <IconCheck size={13} />
+                </button>
+              </span>
+            </div>
+          ))}
+      </div>
+    </div>
+  );
+}
+
+/** Manual edit form: title, source and base portions, plus the ingredient
+ *  and step lists with per-line remove buttons and add buttons. Every line
+ *  is plain text; the backend re-parses ingredient lines on save. */
+function EditRecipeForm({
+  draft,
+  setDraft,
+}: {
+  draft: RecipeDraft;
+  setDraft: (updater: (d: RecipeDraft) => RecipeDraft) => void;
+}) {
+  const setIngredient = (index: number, raw: string) =>
+    setDraft((d) => ({
+      ...d,
+      ingredients: d.ingredients.map((ing, i) => (i === index ? { ...ing, raw } : ing)),
+    }));
+  const removeIngredient = (index: number) =>
+    setDraft((d) => ({ ...d, ingredients: d.ingredients.filter((_, i) => i !== index) }));
+  const setStep = (index: number, text: string) =>
+    setDraft((d) => ({ ...d, steps: d.steps.map((s, i) => (i === index ? text : s)) }));
+  const removeStep = (index: number) =>
+    setDraft((d) => ({ ...d, steps: d.steps.filter((_, i) => i !== index) }));
+
+  return (
+    <div className="edit-form">
+      <label className="edit-label" htmlFor="edit-title">Title</label>
+      <input
+        id="edit-title"
+        className="import-input"
+        value={draft.title}
+        onChange={(e) => setDraft((d) => ({ ...d, title: e.target.value }))}
+      />
+
+      <label className="edit-label" htmlFor="edit-source">Source</label>
+      <input
+        id="edit-source"
+        className="import-input"
+        value={draft.source}
+        onChange={(e) => setDraft((d) => ({ ...d, source: e.target.value }))}
+      />
+
+      <label className="edit-label">Ingredient amounts are for</label>
+      <div className="qty-stepper">
+        <button
+          onClick={() => setDraft((d) => ({ ...d, basePortions: Math.max(1, d.basePortions - 1) }))}
+          aria-label="Fewer base portions"
+        >
+          <IconMinus size={18} />
+        </button>
+        <span className="value">{draft.basePortions} portions</span>
+        <button
+          onClick={() => setDraft((d) => ({ ...d, basePortions: d.basePortions + 1 }))}
+          aria-label="More base portions"
+        >
+          <IconPlus size={18} />
+        </button>
+      </div>
+
+      <label className="edit-label">Ingredients</label>
+      {draft.ingredients.map((ing, index) => (
+        <div className="edit-row" key={ing.id ?? `new-${index}`}>
+          <input
+            className="import-input edit-input"
+            value={ing.raw}
+            placeholder="e.g. 2 Zwiebeln"
+            onChange={(e) => setIngredient(index, e.target.value)}
+          />
+          <button
+            className="btn btn-ghost btn-sm edit-remove"
+            aria-label="Remove ingredient"
+            onClick={() => removeIngredient(index)}
+          >
+            <IconX size={14} />
+          </button>
+        </div>
+      ))}
+      <button
+        className="btn btn-ghost btn-sm edit-add"
+        onClick={() => setDraft((d) => ({ ...d, ingredients: [...d.ingredients, { raw: "" }] }))}
+      >
+        <IconPlus size={14} />
+        Add ingredient
+      </button>
+
+      <label className="edit-label">Steps</label>
+      {draft.steps.map((step, index) => (
+        <div className="edit-row" key={`step-${index}`}>
+          <textarea
+            className="import-area edit-input"
+            rows={2}
+            value={step}
+            placeholder="Describe this step…"
+            onChange={(e) => setStep(index, e.target.value)}
+          />
+          <button
+            className="btn btn-ghost btn-sm edit-remove"
+            aria-label="Remove step"
+            onClick={() => removeStep(index)}
+          >
+            <IconX size={14} />
+          </button>
+        </div>
+      ))}
+      <button
+        className="btn btn-ghost btn-sm edit-add"
+        onClick={() => setDraft((d) => ({ ...d, steps: [...d.steps, ""] }))}
+      >
+        <IconPlus size={14} />
+        Add step
+      </button>
     </div>
   );
 }

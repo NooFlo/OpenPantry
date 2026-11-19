@@ -789,3 +789,175 @@ def test_tag_landing_pages_act_on_plain_get(client):
 
     assert client.get("/tag/does-not-exist/buy").status_code == 404
     client.delete(f"/api/items/{item['id']}")
+
+
+def test_import_splits_and_or_alternatives(client):
+    text = ("Naan-Curry\n"
+            "1 Zwiebel\n"
+            "500 g Reis\n"
+            "**Basmati rice and or naan to serve**")
+    recipe = client.post("/api/recipes/import", json={"kind": "text", "value": text}).json()
+    by_raw = {i["raw"]: i for i in recipe["ingredients"]}
+    assert "Basmati rice" in by_raw
+    assert "Naan" in by_raw
+    rice, naan = by_raw["Basmati rice"], by_raw["Naan"]
+    assert rice["altGroup"] == naan["altGroup"]
+    assert rice["selected"] == 0 and naan["selected"] == 0
+
+
+def test_select_alternative_and_add_missing(client):
+    text = ("Testbrot\n"
+            "500 g Mehl\n"
+            "Basmatireis und/oder Naan\n"
+            "Alles verrühren.")
+    recipe = client.post("/api/recipes/import", json={"kind": "text", "value": text}).json()
+    group = {i["raw"]: i for i in recipe["ingredients"]}
+    rice, naan = group["Basmatireis"], group["Naan"]
+
+    # nothing picked yet: the group stays off the shopping list
+    before = {e["name"] for e in client.get("/api/shopping-list").json()}
+    result = client.post(f"/api/recipes/{recipe['id']}/add-missing", json={"portions": 2}).json()
+    assert not ({e["name"] for e in result} - before >= {"Naan"})
+
+    # pick naan
+    response = client.post(f"/api/recipes/{recipe['id']}/ingredients/{naan['id']}/select")
+    assert response.status_code == 200
+    updated = response.json()
+    states = {i["raw"]: i["selected"] for i in updated["ingredients"]}
+    assert states["Naan"] == 1
+    assert states["Basmatireis"] == 0
+
+    result = client.post(f"/api/recipes/{recipe['id']}/add-missing", json={"portions": 2}).json()
+    names = [e["name"] for e in result]
+    assert "Naan" in names  # the pick is bought (one package)
+    assert "Basmatireis" not in names or "Basmatireis" in before  # never both options
+
+    # re-selecting rice flips the single pick
+    client.post(f"/api/recipes/{recipe['id']}/ingredients/{rice['id']}/select")
+    updated = client.get("/api/recipes").json()
+    recipe = next(r for r in updated if r["id"] == recipe["id"])
+    states = {i["raw"]: i["selected"] for i in recipe["ingredients"]}
+    assert states["Basmatireis"] == 1
+    assert states["Naan"] == 0
+
+
+def test_cook_only_deducts_selected_alternative(client):
+    items = {i["name"]: i for i in client.get("/api/items").json()}
+    recipe = repo.create_recipe(
+        "Alternativ-Test",
+        "pasted",
+        2,
+        [
+            {"raw": "Haferflocken", "amount": 0.5, "unit": "kg", "item_id": items["Haferflocken"]["id"],
+             "tracked": True, "alt_group": "side-a"},
+            {"raw": "Kartoffeln", "amount": 1, "unit": "kg", "item_id": items["Kartoffeln"]["id"],
+             "tracked": True, "alt_group": "side-a"},
+        ],
+        [],
+    )
+    kartoffeln_before = items["Kartoffeln"]["quantity"]
+    hafer_before = items["Haferflocken"]["quantity"]
+    # undecided group: nothing is deducted
+    repo.cook_recipe(recipe, 2)
+    mid = {i["name"]: i for i in repo.list_items()}
+    assert mid["Kartoffeln"]["quantity"] == kartoffeln_before
+    assert mid["Haferflocken"]["quantity"] == hafer_before
+    # pick the potatoes: only they are deducted
+    first = next(i for i in recipe["ingredients"] if i["raw"] == "Kartoffeln")
+    repo.select_recipe_ingredient(recipe["id"], first["id"])
+    recipe = repo.get_recipe(recipe["id"])  # re-fetch: the pick is persisted
+    repo.cook_recipe(recipe, 2)
+    after = {i["name"]: i for i in repo.list_items()}
+    assert after["Kartoffeln"]["quantity"] == pytest.approx(kartoffeln_before - 1)
+    assert after["Haferflocken"]["quantity"] == hafer_before
+
+
+def test_edit_recipe_texts_ingredients_and_steps(client):
+    text = ("Editkuchen\n2 Zwiebeln\n300 g Dinkelmehl\n1 Prise Salz\nZuerst vermischen.")
+    recipe = client.post("/api/recipes/import", json={"kind": "text", "value": text}).json()
+    by_raw = {i["raw"]: i for i in recipe["ingredients"]}
+    assert "1 Prise Salz" in by_raw
+
+    response = client.patch(f"/api/recipes/{recipe['id']}", json={
+        "title": "Editkuchen XL",
+        "base_portions": 6,
+        "ingredients": [
+            # unchanged line: the pantry match survives
+            {"id": by_raw["2 Zwiebeln"]["id"], "raw": "2 Zwiebeln"},
+            # changed line: re-parsed and re-matched (400 g -> 0.4 kg)
+            {"id": by_raw["300 g Dinkelmehl"]["id"], "raw": "400 g Dinkelmehl"},
+            # new line
+            {"raw": "2 EL Zucker"},
+            # "1 Prise Salz" is dropped
+        ],
+        "steps": ["New step one", "New step two"],
+    })
+    assert response.status_code == 200
+    updated = response.json()
+    assert updated["title"] == "Editkuchen XL"
+    assert updated["basePortions"] == 6
+    assert updated["steps"] == ["New step one", "New step two"]
+    raws = [i["raw"] for i in updated["ingredients"]]
+    assert "1 Prise Salz" not in raws
+    edited_by_raw = {i["raw"]: i for i in updated["ingredients"]}
+    # unchanged keeps its item link
+    assert edited_by_raw["2 Zwiebeln"]["itemId"]
+    # changed line gets the new parsed amount
+    assert edited_by_raw["400 g Dinkelmehl"]["amount"] == pytest.approx(0.4)
+    assert edited_by_raw["2 EL Zucker"]["amount"] is None
+
+    # persisted across reloads, meta (none here) untouched
+    reloaded = next(r for r in client.get("/api/recipes").json() if r["id"] == recipe["id"])
+    assert reloaded["title"] == "Editkuchen XL"
+
+
+def test_edit_recipe_keeps_alternative_group_and_match(client):
+    text = ("Testbraten\n1 Zwiebel\nBasmatireis und/oder Naan")
+    recipe = client.post("/api/recipes/import", json={"kind": "text", "value": text}).json()
+    rice, naan = [i for i in recipe["ingredients"] if i.get("altGroup")]
+    client.post(f"/api/recipes/{recipe['id']}/ingredients/{naan['id']}/select")
+
+    updated = client.patch(f"/api/recipes/{recipe['id']}", json={
+        "title": "Testbraten 2",
+        "ingredients": [
+            *[{"id": i["id"], "raw": i["raw"]} for i in recipe["ingredients"]],
+        ],
+    }).json()
+    group = [i for i in updated["ingredients"] if i.get("altGroup")]
+    assert len(group) == 2
+    assert group[0]["altGroup"] == group[1]["altGroup"]
+    # the pick survived the rebuild
+    picked = [i for i in group if i["selected"]]
+    assert [i["raw"] for i in picked] == ["Naan"]
+
+    # deleting one option leaves a plain single-line ingredient;
+    # raw is a required field of each ingredient edit entry
+    missing_raw = client.patch(f"/api/recipes/{recipe['id']}", json={
+        "ingredients": [{"id": rice["id"]}],
+    })
+    assert missing_raw.status_code == 422
+    updated = client.patch(f"/api/recipes/{recipe['id']}", json={
+        "ingredients": [{"id": rice["id"], "raw": rice["raw"]}],
+    }).json()
+    (plain_ing,) = updated["ingredients"]
+    assert plain_ing["altGroup"] is None
+    assert plain_ing["raw"] == "Basmatireis"
+
+
+def test_edit_recipe_validation(client):
+    recipes = client.get("/api/recipes").json()
+    any_recipe = recipes[0]
+    assert client.patch(f"/api/recipes/{any_recipe['id']}", json={"title": "   "}).status_code == 422
+    assert client.patch(f"/api/recipes/{any_recipe['id']}", json={"base_portions": 0}).status_code == 422
+    assert client.patch("/api/recipes/doesnotexist", json={"title": "x"}).status_code == 404
+
+
+def test_delete_recipe(client):
+    text = "WegDamit\n500 g Mehl\nAlles verrühren."
+    recipe = client.post("/api/recipes/import", json={"kind": "text", "value": text}).json()
+    response = client.delete(f"/api/recipes/{recipe['id']}")
+    assert response.status_code == 200
+    assert response.json() == {"deleted": True}
+    ids = [r["id"] for r in client.get("/api/recipes").json()]
+    assert recipe["id"] not in ids
+    assert client.delete(f"/api/recipes/{recipe['id']}").status_code == 404

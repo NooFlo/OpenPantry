@@ -7,11 +7,39 @@ export function scaledAmount(ing: Ingredient, recipe: Recipe, portions: number):
 }
 
 /** Binary items cannot be divided into portions: in stock is always enough,
- *  out of stock blocks the recipe entirely. */
+ *  out of stock blocks the recipe entirely. Alternative groups ("rice or
+ *  naan") share one slot: satisfied if any option is available, and never
+ *  block the recipe harder than the least available option would. */
+function memberCapacity(ing: Ingredient, recipe: Recipe, items: Item[]): number | null {
+  if (!ing.itemId) return null;
+  const item = items.find((i) => i.id === ing.itemId);
+  if (!item) return null;
+  if (isBinary(item)) return isInStock(item) ? Infinity : null;
+  if (ing.amount == null) return isInStock(item) ? Infinity : null;
+  const per = ing.amount / recipe.basePortions;
+  if (per <= 0) return Infinity;
+  return Math.floor(item.quantity / per + 1e-9);
+}
+
 export function maxPortions(recipe: Recipe, items: Item[]): number {
   let max = Infinity;
+  const seenGroups = new Set<string>();
   for (const ing of recipe.ingredients) {
     if (!ing.tracked) continue;
+    if (ing.altGroup) {
+      if (seenGroups.has(ing.altGroup)) continue;
+      seenGroups.add(ing.altGroup);
+      // one of the options is enough to serve the recipe
+      const members = recipe.ingredients.filter((i) => i.altGroup === ing.altGroup && i.tracked);
+      let groupCap: number | null = null;
+      for (const member of members) {
+        const cap = memberCapacity(member, recipe, items);
+        if (cap != null) groupCap = Math.max(groupCap ?? -Infinity, cap);
+      }
+      if (groupCap === null) return 0;
+      max = Math.min(max, groupCap);
+      continue;
+    }
     if (!ing.itemId || ing.amount == null) return 0;
     const item = items.find((i) => i.id === ing.itemId);
     if (!item) return 0;
@@ -31,15 +59,28 @@ export function isCookable(recipe: Recipe, items: Item[], portions: number): boo
 }
 
 export function missingCount(recipe: Recipe, items: Item[], portions: number): number {
-  return recipe.ingredients.filter((ing) => {
-    if (!ing.tracked) return false;
-    if (!ing.itemId || ing.amount == null) return true;
-    const item = items.find((i) => i.id === ing.itemId);
-    if (!item) return true;
-    if (isBinary(item)) return !isInStock(item);
-    const required = (ing.amount * portions) / recipe.basePortions;
-    return item.quantity < required - 1e-9;
-  }).length;
+  const seen = new Set<string>();
+  let count = 0;
+  for (const ing of recipe.ingredients) {
+    if (!ing.tracked) continue;
+    const key = ing.altGroup ?? ing.id;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    if (ing.altGroup) {
+      // one slot per group: missing only when every option is missing
+      const members = recipe.ingredients.filter((i) => i.altGroup === ing.altGroup && i.tracked);
+      const anyOk = members.some((m) => {
+        const item = m.itemId ? items.find((i) => i.id === m.itemId) : undefined;
+        return item != null && ingredientInStock(m, recipe, portions, item);
+      });
+      if (members.length > 0 && !anyOk) count += 1;
+      continue;
+    }
+    const item = ing.itemId ? items.find((i) => i.id === ing.itemId) : undefined;
+    const ok = item != null && ing.amount != null && ingredientInStock(ing, recipe, portions, item);
+    if (!ok) count += 1;
+  }
+  return count;
 }
 
 export function missingAmount(ing: Ingredient, recipe: Recipe, portions: number, item: Item): number {
