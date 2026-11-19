@@ -961,3 +961,42 @@ def test_delete_recipe(client):
     ids = [r["id"] for r in client.get("/api/recipes").json()]
     assert recipe["id"] not in ids
     assert client.delete(f"/api/recipes/{recipe['id']}").status_code == 404
+
+
+def test_import_links_step_quantities(client):
+    text = ("Zwiebelsuppe\n"
+            "2 Zwiebeln\n"
+            "500 g Mehl\n"
+            "1 Prise Salz\n"
+            "Die Zwiebeln anschwitzen.\n"
+            "Salz und Mehl einrühren.")
+    recipe = client.post("/api/recipes/import", json={"kind": "text", "value": text}).json()
+    step_links = recipe["stepIngredients"]
+    assert len(step_links) == len(recipe["steps"])
+    by_raw = {i["raw"]: i for i in recipe["ingredients"]}
+    step0 = step_links[0]
+    assert len(step0) == 1  # Zwiebeln mentioned once
+    assert step0[0]["ingredientId"] == by_raw["2 Zwiebeln"]["id"]
+    assert recipe["steps"][0][step0[0]["start"]:step0[0]["end"]].lower() == "zwiebeln"
+    step1 = step_links[1]
+    assert [l["ingredientId"] for l in step1] == [by_raw["500 g Mehl"]["id"]]
+    # Salz is unquantified (prise): no qty to show, so no link
+    assert all(l["ingredientId"] != by_raw["1 Prise Salz"]["id"] for l in step1)
+
+
+def test_edit_recipe_relinks_step_quantities(client):
+    text = ("Mengtest\n500 g Mehl\nDas Mehl langsam und gleichmäßig einrühren.")
+    recipe = client.post("/api/recipes/import", json={"kind": "text", "value": text}).json()
+    mehl = next(i for i in recipe["ingredients"] if i["raw"] == "500 g Mehl")
+    assert recipe["stepIngredients"][0][0]["ingredientId"] == mehl["id"]
+    # while steps stay untouched, the (qty) links survive a title edit
+    updated = client.patch(f"/api/recipes/{recipe['id']}", json={"title": "Mengtest 2"}).json()
+    assert updated["stepIngredients"][0][0]["ingredientId"] == mehl["id"]
+    # editing the step text re-derives the links on the new text
+    updated = client.patch(f"/api/recipes/{recipe['id']}", json={
+        "steps": ["Jetzt das Wasser und das Mehl einrühren."],
+    }).json()
+    links = updated["stepIngredients"][0]
+    assert len(links) == 1
+    span = updated["steps"][0][links[0]["start"]:links[0]["end"]]
+    assert span.lower() == "mehl"

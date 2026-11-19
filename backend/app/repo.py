@@ -315,8 +315,53 @@ def match_receipt_item(receipt_id: str, item_id: str, product_name: str) -> dict
 def _recipe_out(recipe: dict) -> dict:
     recipe = dict(recipe)
     recipe["tags"] = _tags(recipe.pop("tags_json", None))
+    recipe["step_ingredients"] = _step_links(recipe.pop("step_ingredients_json", None),
+                                              len(recipe["steps"]))
     recipe.pop("steps_json", None)
     return recipe
+
+
+def _step_links(links_json: str | None, step_count: int) -> list[list[dict]]:
+    """Stored flat link list -> one list per step. Each link marks the span
+    of an ingredient mention; the UI renders the live-scaled "(qty)" there."""
+    per_step: list[list[dict]] = [[] for _ in range(max(step_count, 0))]
+    try:
+        links = json.loads(links_json or "[]")
+    except (ValueError, TypeError):
+        return per_step
+    if not isinstance(links, list):
+        return per_step
+    for link in links:
+        if not isinstance(link, dict):
+            continue
+        step, ingredient_id = link.get("step"), link.get("ingredient_id")
+        if not isinstance(step, int) or not (0 <= step < step_count) or not ingredient_id:
+            continue
+        per_step[step].append({"ingredient_id": ingredient_id,
+                               "start": link.get("start") or 0, "end": link.get("end") or 0,
+                               "name": link.get("name") or ""})
+    return per_step
+
+
+def set_step_ingredient_links(recipe_id: str, links: list[dict]) -> dict | None:
+    """Persist ingredient mentions in the step texts. LINKS index the
+    ingredient entry list; ids are resolved by insertion order (rowid)."""
+    with get_db() as db:
+        ids = [row["id"] for row in db.execute(
+            "SELECT id FROM ingredients WHERE recipe_id = ? ORDER BY rowid",
+            (recipe_id,),
+        ).fetchall()]
+        resolved = []
+        for link in links:
+            index = link.get("ing")
+            if not isinstance(index, int) or not (0 <= index < len(ids)):
+                continue
+            resolved.append({"step": link["step"], "ingredient_id": ids[index],
+                             "start": link["start"], "end": link["end"],
+                             "name": link.get("name", "")})
+        db.execute("UPDATE recipes SET step_ingredients_json = ? WHERE id = ?",
+                   (json.dumps(resolved), recipe_id))
+    return get_recipe(recipe_id)
 
 
 def _tags(tags_json) -> list[str]:

@@ -188,6 +188,101 @@ def expand_alternatives(ingredients: list[dict]) -> list[dict]:
     return out
 
 
+def _mention_variants(name: str) -> list[str]:
+    """Search variants of an ingredient name: the name itself plus naive
+    English plurals ("onion" -> "onions", "oniones" is wrong but harmless —
+    a failed match costs nothing)."""
+    name = name.strip()
+    return [name, name + "s", name + "es"]
+
+
+def _mention_key(ing: dict) -> str:
+    """The text to search for in steps: the parsed ingredient name (units and
+    measure words stripped), falling back to deterministic name cleanup."""
+    raw = ing.get("name") or ing.get("raw") or ""
+    parsed = parse_ingredient_line(raw)
+    name = (parsed or {}).get("name") or base_ingredient_name(raw)
+    return name
+
+
+def link_ingredients_in_steps(steps: list[str], ingredients: list[dict],
+                              choice: dict | None = None, cloud: dict | None = None) -> list[dict]:
+    """Find quantified ingredient mentions in the recipe's step texts.
+
+    Every mention gets its own link (character span within the step) — the
+    UI renders a live "(qty)" after each span, scaled by the portions
+    stepper. Deterministic word-boundary matching on the cleaned ingredient
+    name (longest names first so "ground cumin" wins over "cumin");
+    the LLM only contributes extra lookup phrases, which are accepted only
+    when found verbatim in the text. `ing` indexes into the ingredient list,
+    resolved to real ids by the repo when stored."""
+    # quantified ingredients only: unquantified ones (spoon measures etc.)
+    # have no per-portion factor to display
+    candidates: list[tuple[int, str]] = []  # (ingredient index, base name)
+    for index, ing in enumerate(ingredients):
+        if ing.get("amount") is None:
+            continue
+        name = _mention_key(ing)
+        if len(re.findall(r"[^\W\d_]", name, re.UNICODE)) >= 2:
+            candidates.append((index, name))
+    if not candidates or not any((s or "").strip() for s in steps):
+        return []
+    names = [name for _, name in candidates]
+    with telemetry.span("step_aliasing", names=len(names)):
+        aliases = llm.step_aliases(names, steps, choice, cloud) or {}
+    # aliases never steal a real ingredient's mention: quantified candidates
+    # AND unquantified ingredients both own their names in the step text
+    names_lower = {name.lower() for _, name in candidates}
+    owners = {_mention_key(ing).lower() for ing in ingredients} | names_lower
+
+    links: list[dict] = []
+    for step_index, step in enumerate(steps):
+        if not step:
+            continue
+        taken: list[tuple[int, int]] = []
+        local: list[dict] = []
+
+        def _claim(index: int, phrase: str, step: str = step, lower: str = step.lower()) -> int:
+            """Tag every word-boundary occurrence of phrase not already taken."""
+            claimed = 0
+            start = 0
+            while True:
+                found = lower.find(phrase.lower(), start)
+                if found < 0:
+                    break
+                end = found + len(phrase)
+                start = end
+                before_ok = found == 0 or not re.match(r"[\wÄÖÜäöüß]", step[found - 1], re.UNICODE)
+                after_ok = end >= len(step) or not re.match(r"[\wÄÖÜäöüß]", step[end], re.UNICODE)
+                overlaps = any(not (end <= s or found >= e) for s, e in taken)
+                if before_ok and after_ok and not overlaps:
+                    taken.append((found, end))
+                    local.append({"step": step_index, "ing": index,
+                                  "start": found, "end": end, "name": step[found:end]})
+                    claimed += 1
+            return claimed
+
+        # phase 1 — the ingredient's own name (naive plurals included).
+        # Exact names always claim before aliases, longest first, so
+        # "ground cumin" wins over "cumin".
+        for index, name in sorted(candidates, key=lambda pair: len(pair[1]), reverse=True):
+            for variant in _mention_variants(name):
+                _claim(index, variant)
+        # phase 2 — LLM-proposed phrases for mentions under a different
+        # word ("the marinade", "garlic" for "Knoblauch"). An alias that
+        # collides with any ingredient's real name is rejected outright:
+        # the name itself owns its mentions.
+        for index, name in candidates:
+            for alias in aliases.get(name, []):
+                alias_lower = alias.lower()
+                if any(other == alias_lower or other in alias_lower or alias_lower in other
+                       for other in owners):
+                    continue
+                _claim(index, alias)
+        links.extend(sorted(local, key=lambda link: link["start"]))
+    return links
+
+
 HEADER_RE = re.compile(r"^(zutaten|ingredients|servings|preparation|zubereitung)\b|^\W*for \d+ (portions|servings)", re.IGNORECASE)
 PORTIONS_RE = re.compile(r"(?:für|for)\s*(\d+)\s*(?:portionen|portions|servings)", re.IGNORECASE)
 
@@ -479,12 +574,23 @@ def llm_recipe(text: str, source: str, choice: dict | None = None, cloud: dict |
     for ing in data.get("ingredients") or []:
         if not isinstance(ing, dict):
             continue
-        ingredients.append({
-            "raw": strip_markdown(str(ing.get("raw") or ing.get("name") or "")),
+        raw = strip_markdown(str(ing.get("raw") or ing.get("name") or ""))
+        name = strip_markdown(str(ing.get("name") or ing.get("raw") or ""))
+        entry = {
+            "raw": raw,
             "amount": ing.get("amount"),
             "unit": ing.get("unit") if ing.get("unit") in ("g", "kg", "ml", "l", "pcs") else None,
-            "name": strip_markdown(str(ing.get("name") or ing.get("raw") or "")),
-        })
+            "name": name,
+        }
+        # guard: the name must name a food. Unit-only leftovers ("250 g")
+        # carry no per-portion factor; re-derive the entry deterministically
+        # from its raw line instead of trusting the LLM numbers.
+        if len(re.findall(r"[^\W\d_]", name, re.UNICODE)) < 2:
+            parsed = parse_ingredient_line(raw)
+            entry["name"] = (parsed or {}).get("name") or name or raw
+            if parsed:
+                entry["amount"], entry["unit"] = parsed["amount"], parsed["unit"]
+        ingredients.append(entry)
     ingredients = expand_alternatives(ingredients)
 
     def _minutes(value):

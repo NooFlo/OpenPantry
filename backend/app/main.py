@@ -499,8 +499,13 @@ def _ingredient_entry(ing: dict, canon: dict[str, str]) -> dict:
 def _create_recipe_with_matches(data: dict, choice: dict | None = None, cloud: dict | None = None) -> dict:
     canon = _canonical_names(data, choice, cloud)
     ingredients = [_ingredient_entry(ing, canon) for ing in data["ingredients"]]
-    return repo.create_recipe(data["title"], data["source"], data["base_portions"],
-                              ingredients, data["steps"], _recipe_meta(data))
+    with telemetry.span("step_links", steps=len(data["steps"])):
+        links = extract.link_ingredients_in_steps(data["steps"], ingredients, choice, cloud)
+    recipe = repo.create_recipe(data["title"], data["source"], data["base_portions"],
+                                ingredients, data["steps"], _recipe_meta(data))
+    if links:
+        return repo.set_step_ingredient_links(recipe["id"], links)
+    return recipe
 
 
 @app.post("/api/recipes/{recipe_id}/refresh")
@@ -522,11 +527,14 @@ def refresh_recipe(recipe_id: str):
         raise HTTPException(422, "could not extract any ingredients")
     canon = _canonical_names(data, choice, cloud)
     ingredients = [_ingredient_entry(ing, canon) for ing in data["ingredients"]]
-    result = camelize(repo.replace_recipe(recipe_id, data["title"], data["source"],
-                                          data["base_portions"], ingredients, data["steps"],
-                                          _recipe_meta(data)))
+    with telemetry.span("step_links", steps=len(data["steps"])):
+        links = extract.link_ingredients_in_steps(data["steps"], ingredients, choice, cloud)
+    result = repo.replace_recipe(recipe_id, data["title"], data["source"],
+                                  data["base_portions"], ingredients, data["steps"], _recipe_meta(data))
+    if links:
+        result = repo.set_step_ingredient_links(recipe_id, links)
     trace.finish("ok")
-    return result
+    return camelize(result)
 
 
 def _get_recipe_or_404(recipe_id: str) -> dict:
@@ -632,6 +640,13 @@ def edit_recipe(recipe_id: str, body: RecipeEditRequest):
     title = body.title.strip() if body.title is not None else None
     updated = repo.update_recipe(recipe_id, title, body.source, body.base_portions,
                                   body.steps, ingredients)
+    if body.steps is not None or ingredients is not None:
+        # step or ingredient lines changed: re-derive the (qty) mention spans
+        choice = get_model_choice("recipes")
+        cloud = get_cloud_config()
+        links = extract.link_ingredients_in_steps(updated["steps"], updated["ingredients"],
+                                                 choice, cloud)
+        updated = repo.set_step_ingredient_links(recipe_id, links)
     return camelize(updated)
 
 

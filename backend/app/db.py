@@ -54,9 +54,9 @@ CREATE TABLE IF NOT EXISTS recipes (
     category TEXT,
     tags_json TEXT NOT NULL DEFAULT '[]',
     image_url TEXT,
+    step_ingredients_json TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
-
 CREATE TABLE IF NOT EXISTS ingredients (
     id TEXT PRIMARY KEY,
     recipe_id TEXT NOT NULL REFERENCES recipes(id) ON DELETE CASCADE,
@@ -145,3 +145,7 @@ def init_db():
             if column not in recipe_columns:
                 db.execute(f"ALTER TABLE recipes ADD COLUMN {column} {kind}")
         db.execute("UPDATE recipes SET created_at = datetime('now') WHERE created_at IS NULL")
+        # live step quantities: spans of ingredient mentions per step, the
+        # (qty) shown behind them is computed from the portions at render
+        if "step_ingredients_json" not in recipe_columns:
+            db.execute("ALTER TABLE recipes ADD COLUMN step_ingredients_json TEXT")

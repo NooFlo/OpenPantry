@@ -260,3 +260,114 @@ def test_heuristic_recipe_splits_alternative_line_without_amount():
     assert rice["alt_group"] == naan["alt_group"]
     # the and/or side line is an ingredient, not lost to the steps
     assert not any("naan" in s.lower() for s in recipe["steps"])
+
+
+def test_link_ingredients_in_steps_every_mention(monkeypatch):
+    from app import llm
+    from app.extract import link_ingredients_in_steps
+    monkeypatch.setattr(llm, "step_aliases", lambda *a, **k: {})
+    ingredients = [
+        {"raw": "500 g Mehl", "amount": 0.5, "unit": "kg"},
+        {"raw": "2 Zwiebeln", "amount": 2, "unit": "pcs"},
+        {"raw": "1 Prise Salz", "amount": None},  # unquantified: never tagged
+    ]
+    steps = [
+        "Die Zwiebeln anschwitzen und die Zwiebeln glasig dünsten.",
+        "Mehl und Salz verrühren.",
+    ]
+    links = link_ingredients_in_steps(steps, ingredients)
+    step0 = [l for l in links if l["step"] == 0]
+    step1 = [l for l in links if l["step"] == 1]
+    # every mention gets its own span
+    assert [l["ing"] for l in step0] == [1, 1]
+    assert steps[0][step0[0]["start"]:step0[0]["end"]].lower() == "zwiebeln"
+    assert steps[0][step0[1]["start"]:step0[1]["end"]].lower() == "zwiebeln"
+    assert step0[0]["start"] != step0[1]["start"]
+    # Mehl quantified -> tagged; Salz (unquantified) -> not
+    assert [l["ing"] for l in step1] == [0]
+    assert steps[1][step1[0]["start"]:step1[0]["end"]].lower() == "mehl"
+
+
+def test_link_ingredients_in_steps_plural_and_longest_first(monkeypatch):
+    from app import llm
+    from app.extract import link_ingredients_in_steps
+    monkeypatch.setattr(llm, "step_aliases", lambda *a, **k: {})
+    ingredients = [
+        {"raw": "1 onion", "amount": 1, "unit": "pcs"},
+        {"raw": "1 tsp ground cumin", "amount": 1, "unit": "pcs"},
+        {"raw": "1 tsp cumin seeds", "amount": 1, "unit": "pcs"},
+    ]
+    steps = ["Chop the onions, toast the ground cumin and the cumin seeds."]
+    links = link_ingredients_in_steps(steps, ingredients)
+    spans = {(l["ing"], steps[0][l["start"]:l["end"]].lower()) for l in links}
+    assert (0, "onions") in spans  # naive plural matched
+    assert (1, "ground cumin") in spans  # longest first: not stolen by "cumin"
+    assert (2, "cumin seeds") in spans
+    assert all(l["ing"] == 0 for l in links if "onion" in steps[0][l["start"]:l["end"]])
+
+
+def test_link_ingredients_in_steps_uses_llm_aliases(monkeypatch):
+    from app import llm
+    from app.extract import link_ingredients_in_steps
+    # LLM proposes "garlic" for Knoblauch; hallucinated phrases are absent
+    # from the steps and therefore simply never match
+    monkeypatch.setattr(llm, "step_aliases",
+                        lambda names, steps, choice=None, cloud=None: {"Knoblauch": ["garlic"]})
+    ingredients = [{"raw": "2 Zehen Knoblauch", "amount": 2, "unit": "pcs"}]
+    links = link_ingredients_in_steps(["Crush the garlic and the Knoblauch."], ingredients)
+    matched = [l for l in links if l["step"] == 0]
+    texts = ["Crush the garlic and the Knoblauch."[l["start"]:l["end"]].lower() for l in matched]
+    assert sorted(texts) == ["garlic", "knoblauch"]
+
+
+def test_llm_step_aliases_guarded(monkeypatch):
+    from app import llm
+    monkeypatch.setattr(llm, "generate_json", lambda *a, **k: {
+        "aliases": {
+            "Mehl": ["flour", "the dough", 5, "a very long phrase that goes on and on way too far"],
+            "NotAnIngredient": ["x"],
+            "Zwiebeln": ["Zwiebeln"],
+        }
+    })
+    aliases = llm.step_aliases(["Mehl", "Zwiebeln"], ["Mix the flour."])
+    # digit and 8-word junk dropped, self-alias dropped, unknown key dropped;
+    # "the dough" is a plausible 2-word noun phrase and stays
+    assert aliases == {"Mehl": ["flour", "the dough"]}
+
+
+def test_link_ingredients_wrong_alias_never_steals_a_name(monkeypatch):
+    from app import llm
+    from app.extract import link_ingredients_in_steps
+    # the LLM hallucinated: it proposed "Zwiebeln" and "Butter" as aliases of
+    # Basmatireis. Real names own their mentions; the junk aliases are dropped.
+    monkeypatch.setattr(llm, "step_aliases", lambda *a, **k: {"Basmatireis": ["Zwiebeln", "Butter"]})
+    ingredients = [
+        {"raw": "250 g Basmatireis", "amount": 0.25, "unit": "kg"},
+        {"raw": "2 Zwiebeln", "amount": 2, "unit": "pcs"},
+    ]
+    steps = ["Die Zwiebeln anrösten. Den Basmatireis mit Zwiebeln servieren."]
+    links = link_ingredients_in_steps(steps, ingredients)
+    spans = [(l["ing"], steps[0][l["start"]:l["end"]]) for l in links]
+    assert (0, "Basmatireis") in spans
+    assert (1, "Zwiebeln") in spans
+    assert all(ing == 1 for ing, text in spans if "Zwiebel" in text), spans
+    assert all(ing == 0 for ing, text in spans if text == "Basmatireis"), spans
+
+
+def test_llm_recipe_repairs_unit_only_ingredient_names(monkeypatch):
+    from app import extract
+    # the local 3b model sometimes drops the food from the name and dumps
+    # the amount on the unit-only leftover ("250 g", amount 250)
+    monkeypatch.setattr(extract.llm, "generate_json", lambda *a, **k: {
+        "title": "Test", "basePortions": 4,
+        "ingredients": [
+            {"raw": "250 g Basmatireis", "amount": 250, "unit": "g", "name": "250 g"},
+            {"raw": "2 Zwiebeln", "amount": 2, "unit": "pcs", "name": "Zwiebeln"},
+        ],
+        "steps": ["Reis kochen."],
+    })
+    recipe = extract.llm_recipe("egal", "pasted")
+    by_name = {i["name"]: i for i in recipe["ingredients"]}
+    assert by_name["Basmatireis"]["amount"] == 0.25
+    assert by_name["Basmatireis"]["unit"] == "kg"
+    assert by_name["Zwiebeln"]["amount"] == 2

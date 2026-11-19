@@ -1,6 +1,7 @@
 import difflib
 import json
 import os
+import re
 import time
 
 import httpx
@@ -147,3 +148,56 @@ def canonicalize_names(
             continue
         mapping[src] = dst
     return mapping
+
+
+ALIAS_RULES = (
+    "The steps of a recipe mention these ingredients, sometimes with different words "
+    "(pronouns like 'it', a marinade name, a synonym like 'garlic' for 'Knoblauch').\n"
+    "For each ingredient, list the exact noun phrases (1-4 words) that actually appear in "
+    "the step text and refer to it. Only include phrases you can find verbatim in the steps. "
+    "Never invent phrases. Keep the language of the steps. No verbs, no sentences. "
+    "Ingredient names already matching the steps need no alias.\n"
+    'Reply with JSON only: {"aliases": {"<ingredient name>": ["phrase", ...], ...}} '
+    "(omit ingredients with no alias)."
+)
+
+
+def step_aliases(
+    names: list[str], steps: list[str], choice: dict | None = None, cloud: dict | None = None
+) -> dict[str, list[str]]:
+    """LLM proposes noun phrases from the step text for each ingredient —
+    the deterministic linker then only accepts aliases found verbatim in
+    the steps, so a hallucinated phrase never tags a wrong quantity."""
+    names = [n for n in dict.fromkeys(names) if n]
+    if not names or not any(s.strip() for s in steps):
+        return {}
+    payload = (
+        ALIAS_RULES
+        + "\n\nIngredients:\n"
+        + json.dumps(names, ensure_ascii=False)
+        + "\n\nSteps:\n"
+        + json.dumps([s.strip() for s in steps], ensure_ascii=False)
+    )
+    body = generate_json(payload, choice, cloud)
+    if not isinstance(body, dict) or not isinstance(body.get("aliases"), dict):
+        return {}
+    out: dict[str, list[str]] = {}
+    for src, aliases in body["aliases"].items():
+        if not isinstance(src, str) or src not in names or not isinstance(aliases, list):
+            continue
+        clean = []
+        for alias in aliases:
+            if not isinstance(alias, str):
+                continue
+            alias = alias.strip().strip('"\',.').strip()
+            # alias sanity: short noun-ish phrases only, never a quantity or sentence
+            if not alias or len(alias) > 40 or len(alias.split()) > 4:
+                continue
+            if not re.search(r"[A-Za-zÄÖÜäöüß]", alias) or re.search(r"\d", alias):
+                continue
+            if alias.lower() == src.lower() or alias in clean:
+                continue
+            clean.append(alias)
+        if clean:
+            out[src] = clean[:5]
+    return out

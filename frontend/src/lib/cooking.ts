@@ -1,4 +1,4 @@
-import type { Ingredient, Item, Recipe } from "../types";
+import type { Ingredient, Item, Recipe, StepLink } from "../types";
 import { isBinary, isInStock } from "./tracking";
 
 export function scaledAmount(ing: Ingredient, recipe: Recipe, portions: number): number | undefined {
@@ -95,4 +95,43 @@ export function missingAmount(ing: Ingredient, recipe: Recipe, portions: number,
 export function ingredientInStock(ing: Ingredient, recipe: Recipe, portions: number, item: Item): boolean {
   if (isBinary(item)) return isInStock(item);
   return missingAmount(ing, recipe, portions, item) <= 1e-9;
+}
+
+/** Smart quantity display: household units — below 1 kg/l shows g/ml ("0.06
+ *  kg" -> "60 g"); pieces as plain numbers, "2" (or "2 pcs" with unit). */
+export function formatQty(amount: number, unit?: string | null, withUnit = false): string {
+  const trim = (n: number) => String(parseFloat((Math.round(n * 100) / 100).toFixed(2)));
+  if (unit === "kg") return amount >= 1 ? `${trim(amount)} kg` : `${trim(amount * 1000)} g`;
+  if (unit === "l") return amount >= 1 ? `${trim(amount)} l` : `${trim(amount * 1000)} ml`;
+  return withUnit && unit ? `${trim(amount)} ${unit}` : trim(amount);
+}
+
+export interface StepSegment {
+  text: string;
+  /** live-scaled "(qty)" chip rendered after an ingredient mention */
+  isQty?: boolean;
+}
+
+/** Step text sliced at the recorded ingredient mentions, with a formatted
+ *  "(qty)" segment behind each — recomputed from the portions on every
+ *  render, so the stepper updates all quantities live. */
+export function stepSegments(
+  step: string,
+  links: StepLink[] | undefined,
+  recipe: Recipe,
+  portions: number
+): StepSegment[] {
+  const segments: StepSegment[] = [];
+  let pos = 0;
+  const ordered = [...(links ?? [])].sort((a, b) => a.start - b.start);
+  for (const link of ordered) {
+    if (link.start < pos || link.start < 0 || link.end > step.length) continue;
+    const ing = recipe.ingredients.find((i) => i.id === link.ingredientId);
+    const amount = ing ? scaledAmount(ing, recipe, portions) : undefined;
+    segments.push({ text: step.slice(pos, link.end) });
+    if (amount != null) segments.push({ text: ` (${formatQty(amount, ing?.unit)})`, isQty: true });
+    pos = link.end;
+  }
+  segments.push({ text: step.slice(pos) });
+  return segments;
 }

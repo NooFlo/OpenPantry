@@ -1,7 +1,7 @@
 import { Fragment, useMemo, useState } from "react";
 import type { Ingredient, Item, ModelList, Recipe, RecipeEditPatch, Settings, SettingsPatch } from "../types";
 import { importRecipe } from "../api";
-import { maxPortions, missingAmount, scaledAmount, ingredientInStock } from "../lib/cooking";
+import { maxPortions, missingAmount, scaledAmount, ingredientInStock, formatQty, stepSegments } from "../lib/cooking";
 import { isBinary } from "../lib/tracking";
 import { RECIPE_FILTERS, formatMinutes } from "../lib/tags";
 import { useMediaQuery } from "../lib/useMediaQuery";
@@ -271,7 +271,6 @@ export default function RecipesScreen({
     );
     const trackedCount = missingRows.length + okRows.length;
     const stockPct = trackedCount > 0 ? Math.round((okRows.length / trackedCount) * 100) : 100;
-    const round2 = (n: number) => Math.round(n * 100) / 100;
 
     const renderMissingRow = ({ ing, item, req, state, missing }: Row) => (
       <div className="ing-card missing">
@@ -282,8 +281,8 @@ export default function RecipesScreen({
             {state === "unmapped"
               ? "not in your pantry yet"
               : item && isBinary(item)
-                ? `need ${req} ${item.unit}`
-                : `need ${req} ${item?.unit} \u00B7 have ${round2(item?.quantity ?? 0)} ${item?.unit}`}
+                ? req != null ? `need ${formatQty(req, item?.unit, true)}` : ""
+                : `need ${req != null ? formatQty(req, item?.unit, true) : ""} \u00B7 have ${formatQty(item?.quantity ?? 0, item?.unit, true)}`}
           </div>
           {state === "unmapped" && ing.suggestion && (
             <div className="ing-actions">
@@ -303,7 +302,7 @@ export default function RecipesScreen({
           ing.suggestion ? undefined : <button className="btn btn-ghost btn-sm">Match</button>
         ) : (
           <span className="ing-pill lacking">
-            {item && !isBinary(item) ? `missing ${round2(missing)} ${item.unit}` : "not in stock"}
+            {item && !isBinary(item) ? `missing ${formatQty(missing, item.unit, true)}` : "not in stock"}
           </span>
         )}
       </div>
@@ -467,7 +466,7 @@ export default function RecipesScreen({
                         <div className="ing-main">
                           <div className="ing-name">{u.row.item!.name}</div>
                           {u.row.req != null && (
-                            <div className="ing-sub">need {u.row.req} {u.row.item!.unit}</div>
+                            <div className="ing-sub">need {formatQty(u.row.req, u.row.item!.unit, true)}</div>
                           )}
                         </div>
                         <span className="ing-pill ok">in stock</span>
@@ -504,7 +503,18 @@ export default function RecipesScreen({
                   aria-pressed={activeStep === i}
                 >
                   <span className="step-num">{i + 1}</span>
-                  <span className="step-text">{step}</span>
+                  <span className="step-text">
+                    {stepSegments(step, selected.stepIngredients?.[i], selected, portions).map(
+                      (segment, j) =>
+                        segment.isQty ? (
+                          <span key={j} className="step-qty">
+                            {segment.text}
+                          </span>
+                        ) : (
+                          segment.text
+                        )
+                    )}
+                  </span>
                 </button>
               ))}
             </div>

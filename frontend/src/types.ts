@@ -37,6 +37,15 @@ export interface Ingredient {
   selected?: boolean;
 }
 
+/** A quantified ingredient mention in a step's text: the character span
+ *  where it appears. The UI renders a live-scaled "(qty)" behind the span. */
+export interface StepLink {
+  ingredientId: string;
+  start: number;
+  end: number;
+  name: string;
+}
+
 export interface Recipe {
   id: string;
   title: string;
@@ -44,6 +53,8 @@ export interface Recipe {
   basePortions: number;
   ingredients: Ingredient[];
   steps: string[];
+  /** one StepLink list per step, same order as `steps` */
+  stepIngredients?: StepLink[][];
   prepMinutes?: number;
   cookMinutes?: number;
   totalMinutes?: number;
