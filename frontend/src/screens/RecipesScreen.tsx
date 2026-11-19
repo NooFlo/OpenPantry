@@ -1,7 +1,7 @@
 import { Fragment, useMemo, useState } from "react";
 import type { Ingredient, Item, ModelList, Recipe, RecipeEditPatch, Settings, SettingsPatch } from "../types";
 import { importRecipe } from "../api";
-import { maxPortions, missingAmount, scaledAmount, ingredientInStock, formatQty, stepSegments } from "../lib/cooking";
+import { maxPortions, missingAmount, scaledAmount, ingredientInStock, formatQty, stepSegments, baseIngredientName } from "../lib/cooking";
 import { isBinary } from "../lib/tracking";
 import { RECIPE_FILTERS, formatMinutes } from "../lib/tags";
 import { useMediaQuery } from "../lib/useMediaQuery";
@@ -276,10 +276,12 @@ export default function RecipesScreen({
       <div className="ing-card missing">
         <span className="ing-icon" aria-hidden="true">{state === "unmapped" ? "?" : "!"}</span>
         <div className="ing-main">
-          <div className="ing-name">{item ? item.name : ing.raw}</div>
+          <div className="ing-name">{item ? item.name : baseIngredientName(ing.raw)}</div>
           <div className="ing-sub">
             {state === "unmapped"
-              ? "not in your pantry yet"
+              ? req != null
+                ? `need ${formatQty(req, ing.unit, true)} · not in your pantry yet`
+                : "not in your pantry yet"
               : item && isBinary(item)
                 ? req != null ? `need ${formatQty(req, item?.unit, true)}` : ""
                 : `need ${req != null ? formatQty(req, item?.unit, true) : ""} \u00B7 have ${formatQty(item?.quantity ?? 0, item?.unit, true)}`}
@@ -483,8 +485,8 @@ export default function RecipesScreen({
                 <div className="ing-main">
                   <div className="ing-name">
                     {u.kind === "group"
-                      ? u.rows.map((r) => r.ing.raw).join(" or ")
-                      : u.row.ing.raw}
+                      ? u.rows.map((r) => baseIngredientName(r.ing.raw)).join(" or ")
+                      : baseIngredientName(u.row.ing.raw)}
                   </div>
                 </div>
                 <div className="ing-status always">always in stock</div>
@@ -755,7 +757,7 @@ interface AltGroupCardProps {
  *  Exactly one option is the pick — it is the one that goes on the
  *  shopping list when it's empty and the one cooking deducts. */
 function AltGroupCard({ rows, bucket, recipeId, onMatch, onSelect }: AltGroupCardProps) {
-  const label = rows.map((r) => r.item?.name ?? r.ing.raw).join(" or ");
+  const label = rows.map((r) => r.item?.name ?? baseIngredientName(r.ing.raw)).join(" or ");
   const hasPick = rows.some((r) => r.ing.selected);
   const optionLabel = (r: AltRow) =>
     r.state === "ok" ? "in stock" : r.state === "unmapped" ? "unmapped" : "not in stock";
@@ -777,7 +779,7 @@ function AltGroupCard({ rows, bucket, recipeId, onMatch, onSelect }: AltGroupCar
               title={optionLabel(r)}
             >
               <span className="alt-dot" aria-hidden="true" />
-              <span className="alt-name">{r.item?.name ?? r.ing.raw}</span>
+              <span className="alt-name">{r.item?.name ?? baseIngredientName(r.ing.raw)}</span>
               <span className={r.state === "ok" ? "alt-state ok" : "alt-state"}>{optionLabel(r)}</span>
             </button>
           ))}

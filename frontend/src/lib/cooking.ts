@@ -106,6 +106,29 @@ export function formatQty(amount: number, unit?: string | null, withUnit = false
   return withUnit && unit ? `${trim(amount)} ${unit}` : trim(amount);
 }
 
+const AMOUNT_PREFIX_RE = /^[\d.,/\u00bd\u00bc\u00be\u2153\u2154\u215b]+(?:\s+[\d.,/\u00bd\u00bc\u00be\u2153\u2156\u2154\u215b]+)*\s*/;
+const UNIT_TOKENS = new Set([
+  "g", "gr", "gramm", "kg", "kilogramm", "ml", "milliliter", "cl", "l", "liter",
+  "pcs", "piece", "pieces", "stück", "stueck", "stk", "st",
+  "tl", "el", "esslöffel", "teelöffel", "prise", "pinch", "handful", "handvoll",
+  "tsp", "tsps", "teaspoon", "teaspoons", "tbsp", "tbsps", "tablespoon", "tablespoons",
+  "clove", "cloves", "zehe", "zehen", "bund", "bunch", "beutel", "packung", "packungen",
+  "dose", "dosen", "can", "cans", "cup", "cups", "tasse", "tassen",
+  "flasche", "flaschen", "stange", "stangen", "scheibe", "scheiben", "glas", "gläser",
+]);
+
+/** Bare ingredient display name from a raw line: amount, unit and paren-
+ *  theticals stripped ("250 g Basmatireis (kalt)" -> "Basmatireis"). Keeps
+ *  the raw fallback when nothing applies — never empties the name. */
+export function baseIngredientName(raw: string): string {
+  let name = raw.replace(/\([^)]*\)/g, " ").replace(/\s+/g, " ").trim();
+  name = name.replace(AMOUNT_PREFIX_RE, "");
+  const tokens = name.split(" ").filter(Boolean);
+  while (tokens.length && UNIT_TOKENS.has(tokens[0].toLowerCase())) tokens.shift();
+  const cleaned = tokens.join(" ").trim();
+  return cleaned || raw.trim();
+}
+
 export interface StepSegment {
   text: string;
   /** live-scaled "(qty)" chip rendered after an ingredient mention */
