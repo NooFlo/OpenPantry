@@ -243,8 +243,8 @@ def pending_barcodes() -> list[dict]:
     with get_db() as db:
         rows = db.execute(
             "SELECT p.* FROM barcode_cache p"
-            " LEFT JOIN items i ON i.barcode = p.barcode"
-            " WHERE p.status = 'found' AND i.id IS NULL"
+            " LEFT JOIN item_barcodes b ON b.barcode = p.barcode"
+            " WHERE p.status = 'found' AND b.item_id IS NULL"
             " ORDER BY p.fetched_at DESC"
         ).fetchall()
     pending = []

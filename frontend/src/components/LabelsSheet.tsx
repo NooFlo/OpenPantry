@@ -40,7 +40,7 @@ export default function LabelsSheet({ items, selected, onClose }: LabelsSheetPro
   const [picked, setPicked] = useState<Set<string>>(new Set());
 
   const sorted = useMemo(() => [...items].sort((a, b) => a.name.localeCompare(b.name)), [items]);
-  const withBarcode = items.filter((i) => i.barcode).length;
+  const withBarcode = items.filter((i) => i.barcodes?.length || i.barcode).length;
   const pickedIds = [...picked].filter((id) => items.some((i) => i.id === id));
 
   const toggle = (id: string) => {
@@ -52,7 +52,8 @@ export default function LabelsSheet({ items, selected, onClose }: LabelsSheetPro
     });
   };
   const pickAll = () => setPicked(new Set(items.map((i) => i.id)));
-  const pickWithBarcode = () => setPicked(new Set(items.filter((i) => i.barcode).map((i) => i.id)));
+  const pickWithBarcode = () =>
+    setPicked(new Set(items.filter((i) => i.barcodes?.length || i.barcode).map((i) => i.id)));
   const clearPick = () => setPicked(new Set());
 
   const stripUrl = (ids: string[]) =>
@@ -143,7 +144,7 @@ export default function LabelsSheet({ items, selected, onClose }: LabelsSheetPro
             <div className="info" style={{ flex: 1, textAlign: "left" }}>
               <div className="item-name">{item.name}</div>
               <div className="item-sub" style={{ fontFamily: item.barcode ? "monospace" : undefined }}>
-                {item.barcode ?? "no barcode"}
+                {(item.barcodes?.length ? item.barcodes.join(", ") : item.barcode) ?? "no barcode"}
               </div>
             </div>
           </button>

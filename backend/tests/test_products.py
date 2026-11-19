@@ -239,3 +239,51 @@ def test_control_codes_page_renders_svgs(client):
     assert body.count("<svg") == 3
     for meta in CONTROL_CODES.values():
         assert meta["code"] in body
+
+
+# ------------------------------------------------- multi-barcode items
+
+
+def test_multiple_barcodes_deduct_from_same_item(client):
+    """Eggs from Aldi, REWE and Edeka share one generic stock: any attached
+    barcode resolves to the same item."""
+    salz = next(i for i in _items(client) if i["name"] == "Salz")
+    assert salz["barcodes"] and salz["barcodes"][0] == salz["barcode"]
+
+    # a second vendor's product joins the same item
+    response = client.post(
+        f"/api/items/{salz['id']}/barcodes", json={"barcode": "4012300999992"})
+    assert response.status_code == 200
+    assert "4012300999992" in response.json()["barcodes"]
+
+    a = client.post("/api/scan/purchase", json={"barcode": "4006434000937"}).json()
+    b = client.post("/api/scan/purchase", json={"barcode": "4012300999992"}).json()
+    assert a["id"] == b["id"] == salz["id"]
+    body = client.post("/api/barcode/lookup", json={"barcode": "4012300999992"}).json()
+    assert body["status"] == "known" and body["item"]["id"] == salz["id"]
+
+
+def test_add_barcode_rejects_clashes_and_garbage(client):
+    milch = next(i for i in _items(client) if i["name"] == "Milch")
+    kaffee = next(i for i in _items(client) if i["name"] == "Kaffee")
+    # a barcode can only ever point at one item
+    response = client.post(
+        f"/api/items/{milch['id']}/barcodes", json={"barcode": kaffee["barcode"]})
+    assert response.status_code == 409
+    assert "Kaffee" in response.json()["detail"]
+    assert client.post(f"/api/items/{milch['id']}/barcodes",
+                       json={"barcode": "12345"}).status_code == 400
+    assert client.post("/api/items/missing/barcodes",
+                       json={"barcode": "4012345678901"}).status_code == 404
+
+
+def test_remove_item_barcode(client):
+    salz = next(i for i in _items(client) if i["name"] == "Salz")
+    response = client.delete(f"/api/items/{salz['id']}/barcodes/4012300999992")
+    assert response.status_code == 200
+    assert "4012300999992" not in response.json()["barcodes"]
+    # the seeded barcode keeps working
+    body = client.post("/api/barcode/lookup", json={"barcode": "4006434000937"}).json()
+    assert body["status"] == "known"
+    assert client.delete(
+        f"/api/items/{salz['id']}/barcodes/0000000000000").status_code == 404

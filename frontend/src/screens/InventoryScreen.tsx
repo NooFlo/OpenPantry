@@ -21,6 +21,8 @@ interface InventoryScreenProps {
   onDelete: (id: string) => void;
   onMatchItem: (receiptId: string, itemId: string, productName: string) => void;
   onUpdateItem: (id: string, patch: ItemPatch) => void;
+  onAddItemBarcode: (id: string, barcode: string) => void;
+  onRemoveItemBarcode: (id: string, barcode: string) => void;
   settings: Settings;
   models: ModelList;
   onSaveSettings: (patch: SettingsPatch) => void;
@@ -28,7 +30,7 @@ interface InventoryScreenProps {
   onToggleTheme: () => void;
 }
 
-export default function InventoryScreen({ items, receipts, onConsume, onRestock, onDelete, onMatchItem, onUpdateItem, settings, models, onSaveSettings, theme, onToggleTheme }: InventoryScreenProps) {
+export default function InventoryScreen({ items, receipts, onConsume, onRestock, onDelete, onMatchItem, onUpdateItem, onAddItemBarcode, onRemoveItemBarcode, settings, models, onSaveSettings, theme, onToggleTheme }: InventoryScreenProps) {
   const [query, setQuery] = useState("");
   const [category, setCategory] = useState<string | null>(null);
   const [selected, setSelected] = useState<Item | null>(null);
@@ -224,7 +226,8 @@ export default function InventoryScreen({ items, receipts, onConsume, onRestock,
 
       {twoPane && (
         <div className="detail-settings">
-          <ItemSettings item={selectedLive} onUpdate={onUpdateItem} />
+          <ItemSettings item={selectedLive} onUpdate={onUpdateItem}
+                        onAddBarcode={onAddItemBarcode} onRemoveBarcode={onRemoveItemBarcode} />
         </div>
       )}
     </>
@@ -296,6 +299,8 @@ export default function InventoryScreen({ items, receipts, onConsume, onRestock,
         <AlarmSheet
           item={selectedLive}
           onUpdate={onUpdateItem}
+          onAddBarcode={onAddItemBarcode}
+          onRemoveBarcode={onRemoveItemBarcode}
           onClose={() => setAlarmsOpen(false)}
         />
       )}

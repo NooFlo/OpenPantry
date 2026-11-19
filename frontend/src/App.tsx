@@ -14,10 +14,12 @@ import {
   fetchRecipes,
   fetchSettings,
   fetchShoppingList,
+  addItemBarcode,
   matchRecipeIngredient,
   matchReceiptItem as matchReceiptItemApi,
   pushShoppingList,
   removeFromShoppingList,
+  removeItemBarcode,
   restockItem,
   selectRecipeIngredient,
   updateItem,
@@ -143,6 +145,17 @@ export default function App() {
     updateItem(id, patch).catch(console.error);
   };
 
+  const mergeItem = (updated: Item) =>
+    setItems((prev) => prev.map((i) => (i.id === updated.id ? updated : i)));
+
+  const onAddItemBarcode = (id: string, barcode: string) => {
+    addItemBarcode(id, barcode).then(mergeItem).catch(console.error);
+  };
+
+  const onRemoveItemBarcode = (id: string, barcode: string) => {
+    removeItemBarcode(id, barcode).then(mergeItem).catch(console.error);
+  };
+
   const toggleShoppingList = (id: string) => {
     const item = items.find((i) => i.id === id);
     if (!item) return;
@@ -237,6 +250,8 @@ export default function App() {
             onDelete={removeItem}
             onMatchItem={matchReceiptItem}
             onUpdateItem={changeItemThresholds}
+            onAddItemBarcode={onAddItemBarcode}
+            onRemoveItemBarcode={onRemoveItemBarcode}
             settings={settings}
             models={models}
             onSaveSettings={saveSettings}

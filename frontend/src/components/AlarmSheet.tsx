@@ -2,12 +2,14 @@ import { useEffect, useState } from "react";
 import type { Item, ItemPatch } from "../types";
 import Sheet from "./Sheet";
 import StepperRow, { stepSize } from "./StepperRow";
-import { IconBarcode, IconCheck } from "./Icons";
+import { IconBarcode, IconPlus, IconX } from "./Icons";
 import { isBinary } from "../lib/tracking";
 
 interface ItemSettingsProps {
   item: Item;
   onUpdate: (id: string, patch: ItemPatch) => void;
+  onAddBarcode: (id: string, barcode: string) => void;
+  onRemoveBarcode: (id: string, barcode: string) => void;
 }
 
 function round(value: number): number {
@@ -16,15 +18,21 @@ function round(value: number): number {
 
 /** Tracking mode slider plus alarm/buy steppers. Rendered inline in the
  *  desktop split-detail pane and inside the AlarmSheet on mobile. */
-export function ItemSettings({ item, onUpdate }: ItemSettingsProps) {
+export function ItemSettings({ item, onUpdate, onAddBarcode, onRemoveBarcode }: ItemSettingsProps) {
   const step = stepSize(item.unit);
   const minBuy = item.unit === "pcs" ? 1 : 0.1;
   const binary = isBinary(item);
 
-  const [barcodeDraft, setBarcodeDraft] = useState(item.barcode ?? "");
-  useEffect(() => setBarcodeDraft(item.barcode ?? ""), [item.id, item.barcode]);
+  const [barcodeDraft, setBarcodeDraft] = useState("");
+  useEffect(() => setBarcodeDraft(""), [item.id]);
+  const barcodes = item.barcodes ?? (item.barcode ? [item.barcode] : []);
 
-  const saveBarcode = () => onUpdate(item.id, { barcode: barcodeDraft.trim() });
+  const addBarcode = () => {
+    const code = barcodeDraft.trim();
+    if (!code) return;
+    onAddBarcode(item.id, code);
+    setBarcodeDraft("");
+  };
 
   const stepAlarm = (direction: -1 | 1) => {
     const next = Math.max(0, round(item.minQuantity + direction * step));
@@ -81,20 +89,35 @@ export function ItemSettings({ item, onUpdate }: ItemSettingsProps) {
 
       <div>
         <p className="sheet-sub">
-          <IconBarcode size={14} /> Product barcode — the USB scanner uses it to
-          track this item. Clear the field to remove the mapping.
+          <IconBarcode size={14} /> Product barcodes — the USB scanner deducts
+          and restocks this item with any of them, no matter which store the
+          product came from.
         </p>
+        {barcodes.map((code) => (
+          <div key={code} style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 6 }}>
+            <span className="sheet-sub" style={{ fontFamily: "monospace", margin: 0, flex: 1 }}>
+              {code}
+            </span>
+            <button className="icon-btn" aria-label={`Remove barcode ${code}`}
+                    onClick={() => onRemoveBarcode(item.id, code)}>
+              <IconX size={16} />
+            </button>
+          </div>
+        ))}
         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
           <input
             className="import-input"
             style={{ marginBottom: 0, fontFamily: "monospace" }}
             inputMode="numeric"
-            placeholder="e.g. 4006434000937"
+            placeholder="add another barcode…"
             value={barcodeDraft}
             onChange={(e) => setBarcodeDraft(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") addBarcode();
+            }}
           />
-          <button className="icon-btn" aria-label="Save barcode" onClick={saveBarcode}>
-            <IconCheck size={18} />
+          <button className="icon-btn" aria-label="Add barcode" onClick={addBarcode}>
+            <IconPlus size={18} />
           </button>
         </div>
       </div>
@@ -105,15 +128,17 @@ export function ItemSettings({ item, onUpdate }: ItemSettingsProps) {
 interface AlarmSheetProps {
   item: Item;
   onUpdate: (id: string, patch: ItemPatch) => void;
+  onAddBarcode: (id: string, barcode: string) => void;
+  onRemoveBarcode: (id: string, barcode: string) => void;
   onClose: () => void;
 }
 
-export default function AlarmSheet({ item, onUpdate, onClose }: AlarmSheetProps) {
+export default function AlarmSheet({ item, onUpdate, onAddBarcode, onRemoveBarcode, onClose }: AlarmSheetProps) {
   return (
     <Sheet nested onClose={onClose}>
       <h2 className="sheet-title">{item.name}</h2>
       <p className="sheet-sub">Tracking, alarm &amp; buying quantity</p>
-      <ItemSettings item={item} onUpdate={onUpdate} />
+      <ItemSettings item={item} onUpdate={onUpdate} onAddBarcode={onAddBarcode} onRemoveBarcode={onRemoveBarcode} />
       <div className="sheet-actions">
         <button className="btn btn-ghost" onClick={onClose}>
           Done

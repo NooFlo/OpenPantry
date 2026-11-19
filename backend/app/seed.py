@@ -193,7 +193,6 @@ def seed_if_empty():
             category=item["category"],
             unit=item["unit"],
             package_size=item["package_size"],
-            barcode=item.get("barcode"),
         )
         with get_db() as db:
             db.execute(
@@ -202,6 +201,13 @@ def seed_if_empty():
                 (item["id"], item["quantity"], item["min_quantity"], item.get("uncertain", 0),
                  item["quantity"], item["name"]),
             )
+            # barcodes attach after the id rewrite — earlier rows would be
+            # orphaned by it (item_barcodes references the final id)
+            if item.get("barcode"):
+                db.execute(
+                    "INSERT OR IGNORE INTO item_barcodes (item_id, barcode) VALUES (?, ?)",
+                    (item["id"], item["barcode"]),
+                )
 
     for receipt in SEED_RECEIPTS:
         repo.create_receipt(store=receipt["store"], date=receipt["date"], total=receipt["total"],

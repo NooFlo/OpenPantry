@@ -93,6 +93,13 @@ CREATE TABLE IF NOT EXISTS barcode_cache (
     source TEXT,
     fetched_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
+CREATE TABLE IF NOT EXISTS item_barcodes (
+    barcode TEXT PRIMARY KEY,
+    -- one generic inventory item backs many product barcodes: eggs bought
+    -- at Aldi, REWE or Edeka all deduct from the same "Eier" stock
+    item_id TEXT NOT NULL REFERENCES items(id) ON DELETE CASCADE
+);
 """
 
 
@@ -111,6 +118,11 @@ def get_db():
 def init_db():
     with get_db() as db:
         db.executescript(SCHEMA)
+        # migrate legacy single-barcode values into the multi-barcode table
+        db.execute(
+            "INSERT OR IGNORE INTO item_barcodes (item_id, barcode)"
+            " SELECT id, barcode FROM items WHERE barcode IS NOT NULL"
+        )
         item_columns = {row["name"] for row in db.execute("PRAGMA table_info(items)")}
         if "tracking_mode" not in item_columns:
             db.execute("ALTER TABLE items ADD COLUMN tracking_mode TEXT NOT NULL DEFAULT 'binary'")

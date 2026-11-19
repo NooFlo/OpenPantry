@@ -51,6 +51,14 @@ export function updateItem(itemId: string, patch: ItemPatch): Promise<Item> {
   return request<Item>(`/items/${itemId}/update`, { method: "POST", body: JSON.stringify(patch) });
 }
 
+export function addItemBarcode(itemId: string, barcode: string): Promise<Item> {
+  return request<Item>(`/items/${itemId}/barcodes`, { method: "POST", body: JSON.stringify({ barcode }) });
+}
+
+export function removeItemBarcode(itemId: string, barcode: string): Promise<Item> {
+  return request<Item>(`/items/${itemId}/barcodes/${barcode}`, { method: "DELETE" });
+}
+
 export function deleteItem(itemId: string): Promise<Item> {
   return request<Item>(`/items/${itemId}`, { method: "DELETE" });
 }

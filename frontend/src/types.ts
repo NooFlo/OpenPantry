@@ -12,6 +12,8 @@ export interface Item {
   minQuantity: number;
   packageSize: number;
   barcode?: string;
+  /** All product barcodes that hit this item; `barcode` is the primary. */
+  barcodes?: string[];
   uncertain?: boolean;
   trackingMode: TrackingMode;
 }

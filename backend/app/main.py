@@ -209,6 +209,30 @@ def restock(item_id: str, body: RestockRequest):
     return camelize(item)
 
 
+@app.post("/api/items/{item_id}/barcodes")
+def add_item_barcode(item_id: str, body: BarcodeRequest):
+    """Attach another product barcode to an item — Aldi eggs, REWE eggs, all
+    deduct from the same "Eier" stock."""
+    barcode = re.sub(r"\D", "", body.barcode)
+    if body.barcode.strip() != barcode or not 6 <= len(barcode) <= 14:
+        raise HTTPException(400, "barcode must be 6-14 digits")
+    clash = repo.find_item_by_barcode(barcode)
+    if clash and clash["id"] != item_id:
+        raise HTTPException(409, f"barcode already used by {clash['name']}")
+    item = repo.add_item_barcode(item_id, barcode)
+    if not item:
+        raise HTTPException(404, "item not found")
+    return camelize(item)
+
+
+@app.delete("/api/items/{item_id}/barcodes/{barcode}")
+def remove_item_barcode(item_id: str, barcode: str):
+    item = repo.remove_item_barcode(item_id, barcode)
+    if not item:
+        raise HTTPException(404, "item or barcode not found")
+    return camelize(item)
+
+
 @app.post("/api/scan/barcode")
 def scan_barcode(body: BarcodeRequest):
     item = repo.find_item_by_barcode(body.barcode)

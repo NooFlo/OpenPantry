@@ -25,16 +25,42 @@ def set_setting(key: str, value: str):
         )
 
 
+def _barcodes_for(db, item_ids: list[str]) -> dict[str, list[str]]:
+    if not item_ids:
+        return {}
+    placeholders = ",".join("?" * len(item_ids))
+    rows = db.execute(
+        f"SELECT item_id, barcode FROM item_barcodes WHERE item_id IN ({placeholders})"
+        " ORDER BY rowid",
+        item_ids,
+    ).fetchall()
+    out: dict[str, list[str]] = {}
+    for row in rows:
+        out.setdefault(row["item_id"], []).append(row["barcode"])
+    return out
+
+
+def _attach_barcodes(items: list[dict]) -> list[dict]:
+    """Every item gains `barcodes` (all of them) and `barcode` (the primary,
+    first-assigned one — kept for the single-label UI and API compatibility)."""
+    with get_db() as db:
+        by_item = _barcodes_for(db, [i["id"] for i in items])
+    for item in items:
+        item["barcodes"] = by_item.get(item["id"], [])
+        item["barcode"] = item["barcodes"][0] if item["barcodes"] else None
+    return items
+
+
 def list_items() -> list[dict]:
     with get_db() as db:
         rows = db.execute("SELECT * FROM items ORDER BY name").fetchall()
-    return [dict(r) for r in rows]
+    return _attach_barcodes([dict(r) for r in rows])
 
 
 def get_item(item_id: str) -> dict | None:
     with get_db() as db:
         row = db.execute("SELECT * FROM items WHERE id = ?", (item_id,)).fetchone()
-    return dict(row) if row else None
+    return _attach_barcodes([dict(row)])[0] if row else None
 
 
 def find_item_by_name(name: str) -> dict | None:
@@ -45,14 +71,52 @@ def find_item_by_name(name: str) -> dict | None:
 
 def find_item_by_barcode(barcode: str) -> dict | None:
     with get_db() as db:
-        row = db.execute("SELECT * FROM items WHERE barcode = ?", (barcode,)).fetchone()
-    return dict(row) if row else None
+        row = db.execute(
+            "SELECT * FROM items WHERE id ="
+            " (SELECT item_id FROM item_barcodes WHERE barcode = ?)",
+            (barcode,),
+        ).fetchone()
+    return _attach_barcodes([dict(row)])[0] if row else None
+
+
+def add_item_barcode(item_id: str, barcode: str) -> dict | None:
+    """Register another product barcode for an item (Aldi eggs, REWE eggs —
+    same generic stock). Validation (format, other-item clashes) lives above
+    this layer; INSERT OR IGNORE keeps duplicate calls idempotent."""
+    with get_db() as db:
+        if not db.execute("SELECT 1 FROM items WHERE id = ?", (item_id,)).fetchone():
+            return None
+        db.execute(
+            "INSERT OR IGNORE INTO item_barcodes (item_id, barcode) VALUES (?, ?)",
+            (item_id, barcode),
+        )
+        row = db.execute("SELECT barcode FROM item_barcodes WHERE item_id = ?"
+                         " ORDER BY rowid LIMIT 1", (item_id,)).fetchone()
+        db.execute("UPDATE items SET barcode = ? WHERE id = ?",
+                   (row["barcode"] if row else None, item_id))
+    return get_item(item_id)
+
+
+def remove_item_barcode(item_id: str, barcode: str) -> dict | None:
+    with get_db() as db:
+        if not db.execute(
+            "SELECT 1 FROM item_barcodes WHERE item_id = ? AND barcode = ?",
+            (item_id, barcode),
+        ).fetchone():
+            return None
+        db.execute("DELETE FROM item_barcodes WHERE item_id = ? AND barcode = ?",
+                   (item_id, barcode))
+        row = db.execute("SELECT barcode FROM item_barcodes WHERE item_id = ?"
+                         " ORDER BY rowid LIMIT 1", (item_id,)).fetchone()
+        db.execute("UPDATE items SET barcode = ? WHERE id = ?",
+                   (row["barcode"] if row else None, item_id))
+    return get_item(item_id)
 
 
 def set_item_barcode(item_id: str, barcode: str) -> dict | None:
-    with get_db() as db:
-        db.execute("UPDATE items SET barcode = ? WHERE id = ?", (barcode, item_id))
-    return get_item(item_id)
+    """Legacy single-barcode setter kept for older API callers: adds the
+    mapping without dropping existing ones (multi-barcode semantics)."""
+    return add_item_barcode(item_id, barcode)
 
 
 def create_item(name: str, category: str = "Pantry", unit: str = "pcs",
@@ -76,7 +140,12 @@ def create_item(name: str, category: str = "Pantry", unit: str = "pcs",
             " VALUES (:id, :name, :category, :quantity, :unit, :min_quantity, :package_size, :barcode, :uncertain, :tracking_mode)",
             item,
         )
-    return item
+        if barcode:
+            db.execute(
+                "INSERT OR IGNORE INTO item_barcodes (item_id, barcode) VALUES (?, ?)",
+                (item["id"], barcode),
+            )
+    return _attach_barcodes([item])[0]
 
 
 def best_name_match(name: str, min_ratio: float = 0.75) -> dict | None:
@@ -108,9 +177,16 @@ def update_item(item_id: str, min_quantity: float | None = None,
         if tracking_mode is not None:
             db.execute("UPDATE items SET tracking_mode = ? WHERE id = ?", (tracking_mode, item_id))
         if barcode is not _UNSET:
-            # an empty value clears the barcode mapping (None in the DB)
-            db.execute("UPDATE items SET barcode = ? WHERE id = ?",
-                       (barcode or None, item_id))
+            # legacy single-barcode patch semantics: replaces the whole set
+            db.execute("DELETE FROM item_barcodes WHERE item_id = ?", (item_id,))
+            if barcode:
+                db.execute(
+                    "INSERT OR IGNORE INTO item_barcodes (item_id, barcode) VALUES (?, ?)",
+                    (item_id, barcode),
+                )
+                db.execute("UPDATE items SET barcode = ? WHERE id = ?", (barcode, item_id))
+            else:
+                db.execute("UPDATE items SET barcode = NULL WHERE id = ?", (item_id,))
     return get_item(item_id)
 
 
@@ -153,6 +229,7 @@ def delete_item(item_id: str) -> dict | None:
         item = dict(row)
         db.execute("DELETE FROM shopping_list WHERE item_id = ?", (item_id,))
         db.execute("UPDATE ingredients SET item_id = NULL WHERE item_id = ?", (item_id,))
+        db.execute("DELETE FROM item_barcodes WHERE item_id = ?", (item_id,))
         db.execute("DELETE FROM items WHERE id = ?", (item_id,))
     return item
 
