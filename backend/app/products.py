@@ -164,9 +164,13 @@ def _similarity(candidate: str, item_name: str) -> float:
         return 0.0
     if cand == iname:
         return 2.0
-    if iname in cand:
-        return 1.6
+    # German compounds put the generic item at the token head ("Jodsalz",
+    # "Meersalz", "Kokosmilch") — accept prefix/suffix hits, but never an
+    # arbitrary infix: "Cola" inside "chocoLAte" is a no ("Schokolade" is
+    # its own catalog item).
     tokens = [t for t in re.split(r"[^a-z0-9äöüß]+", cand) if len(t) >= 3]
+    if any(t == iname or t.startswith(iname) or t.endswith(iname) for t in tokens):
+        return 1.6
     best_token = max(
         (difflib.SequenceMatcher(None, t, iname).ratio() for t in tokens),
         default=0.0,
