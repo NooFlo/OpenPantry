@@ -12,7 +12,7 @@ from fastapi.testclient import TestClient  # noqa: E402
 
 from app import products, seed  # noqa: E402
 from app.db import init_db  # noqa: E402
-from app.main import app  # noqa: E402
+from app.main import CONTROL_CODES, app  # noqa: E402
 
 # Barcodes absent from the seeded catalog; the fake OFF API below carries
 # one REWE-style private-label product and one miss.
@@ -193,3 +193,49 @@ def test_parse_quantity():
     assert products.parse_quantity("2 Stück") == (2, "pcs")
     assert products.parse_quantity("") is None
     assert products.parse_quantity("los") is None
+
+
+def test_scan_purchase_restocks_known_item(client):
+    salz = next(i for i in _items(client) if i["name"] == "Salz")
+    before = salz["quantity"]
+    response = client.post("/api/scan/purchase", json={"barcode": salz["barcode"]})
+    assert response.status_code == 200
+    item = response.json()
+    assert item["quantity"] == before + salz["packageSize"]
+    assert FakeOFF.calls == 0
+
+
+def test_scan_purchase_unknown_returns_404(client):
+    response = client.post("/api/scan/purchase", json={"barcode": MISS_EAN})
+    assert response.status_code == 404
+    assert FakeOFF.calls == 0  # enrichment happens via /api/barcode/lookup
+
+
+def test_scan_empty_zeroes_and_reorders(client):
+    client.post("/api/scan/purchase", json={"barcode": "4006434000937"})  # stock up Salz
+    response = client.post("/api/scan/empty", json={"barcode": "4006434000937"})
+    assert response.status_code == 200
+    assert response.json()["quantity"] == 0
+    shopping = client.get("/api/shopping-list").json()
+    assert any(e["name"] == "Salz" for e in shopping)
+
+
+def test_control_codes_are_valid_ean13():
+    """The sticker page renders these via python-barcode, which rejects wrong
+    check digits — keep the constants and the rendered codes in sync."""
+    from barcode.ean import EAN13
+
+    for meta in CONTROL_CODES.values():
+        assert EAN13(meta["code"]).get_fullcode() == meta["code"]
+        assert meta["code"].startswith("20")  # GS1 in-store range
+        assert len(meta["code"]) == 13
+
+
+def test_control_codes_page_renders_svgs(client):
+    response = client.get("/print/control-codes")
+    assert response.status_code == 200
+    body = response.text
+    assert "BOUGHT" in body and "EMPTY / TRASH" in body and "CONSUME" in body
+    assert body.count("<svg") == 3
+    for meta in CONTROL_CODES.values():
+        assert meta["code"] in body

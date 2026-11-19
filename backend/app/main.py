@@ -203,6 +203,84 @@ def scan_barcode(body: BarcodeRequest):
     return camelize(repo.consume_item(item["id"], item["package_size"]))
 
 
+# Control-code stickers for the USB scanner: scan one of these EAN-13 codes in
+# the GS1 in-store reserved range (20xxxxxxxxxx — no real product can collide)
+# to switch what subsequent product scans do. GET /print/control-codes renders
+# them as printable barcodes.
+CONTROL_CODES = {
+    "bought": {"code": "2000000000008", "label": "BOUGHT",
+                "hint": "Scanned items are restocked (+1 package)"},
+    "empty": {"code": "2000000000015", "label": "EMPTY / TRASH",
+              "hint": "Scanned items go to zero and land on the shopping list"},
+    "consume": {"code": "2000000000022", "label": "CONSUME",
+                "hint": "Back to the default: one package used up"},
+}
+
+
+@app.post("/api/scan/purchase")
+def scan_purchase(body: BarcodeRequest):
+    item = repo.find_item_by_barcode(body.barcode)
+    if not item:
+        raise HTTPException(404, "unknown barcode")
+    _push_to_ha()
+    return camelize(repo.restock_item(item["id"], item["package_size"] or 1))
+
+
+@app.post("/api/scan/empty")
+def scan_empty(body: BarcodeRequest):
+    item = repo.find_item_by_barcode(body.barcode)
+    if not item:
+        raise HTTPException(404, "unknown barcode")
+    item = repo.empty_item(item["id"])
+    _push_to_ha()
+    return camelize(item)
+
+
+@app.get("/print/control-codes", response_class=HTMLResponse)
+def print_control_codes():
+    try:
+        import barcode as barcode_lib
+        from barcode.writer import SVGWriter
+
+        cards = []
+        for action, meta in CONTROL_CODES.items():
+            svg = barcode_lib.EAN13(meta["code"], writer=SVGWriter()).render()
+            cards.append(
+                f"<div class='card'><h2>{meta['label']}</h2>{svg.decode()}"
+                f"<p class='digits'>{meta['code']}</p><p class='hint'>{meta['hint']}</p></div>"
+            )
+        cards = "\n".join(cards)
+        err = ""
+    except Exception as e:  # noqa: BLE001
+        cards, err = "", f"<p>Rendering failed: {e}</p>"
+    return f"""<!doctype html>
+<html><head><meta charset="utf-8"><title>OpenPantry control codes</title>
+<style>
+body {{ font-family: -apple-system, sans-serif; background: #fff; color: #111; max-width: 780px; margin: 24px auto; }}
+h1 {{ font-size: 22px; }}
+.cards {{ display: flex; gap: 24px; flex-wrap: wrap; }}
+.card {{ border: 2px solid #111; border-radius: 12px; padding: 18px 22px; text-align: center; page-break-inside: avoid; }}
+.card h2 {{ margin: 0 0 10px; letter-spacing: 1px; }}
+.card svg {{ width: 210px; }}
+.digits {{ font-family: monospace; font-size: 15px; margin: 6px 0 2px; }}
+.hint {{ font-size: 13px; color: #555; margin: 4px 0 0; max-width: 230px; }}
+ol {{ font-size: 14px; line-height: 1.5; }}
+@media print {{ body {{ margin: 0; }} }}
+</style></head><body>
+<h1>OpenPantry scanner control codes</h1>
+<div class="cards">{cards}</div>
+{err}
+<h3>How to use</h3>
+<ol>
+<li>Print this page (sticker paper or card stock, laminated works best) and keep it next to the scanner.</li>
+<li>Scan one control code to switch the scanner mode — it stays active until another control code is scanned.</li>
+<li><b>Unpacking groceries:</b> scan BOUGHT once, then scan each product. Unknown products land in the review queue with their Open Food Facts data.</li>
+<li><b>Throwing packaging away:</b> scan EMPTY, then the product — stock goes to zero and it's re-ordered.</li>
+<li>Scan CONSUME to return to the default (package used up/cooking).</li>
+</ol>
+</body></html>"""
+
+
 def _clean_barcode(raw: str) -> str:
     barcode = re.sub(r"\D", "", raw)
     if not 6 <= len(barcode) <= 14:
