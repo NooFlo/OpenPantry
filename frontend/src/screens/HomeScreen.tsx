@@ -1,7 +1,8 @@
 import { useState } from "react";
 import type { Item, Settings, SettingsPatch, ShoppingListEntry } from "../types";
 import StockBar from "../components/StockBar";
-import { IconCheck, IconPlus } from "../components/Icons";
+import { IconCheck, IconGear, IconPlus } from "../components/Icons";
+import AppSettingsSheet from "../components/AppSettingsSheet";
 import ThemeToggle from "../components/ThemeToggle";
 import ShoppingListSheet from "../components/ShoppingListSheet";
 import { isBinary, isLow } from "../lib/tracking";
@@ -32,6 +33,7 @@ export default function HomeScreen({
   onToggleTheme,
 }: HomeScreenProps) {
   const [showList, setShowList] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
   const lowStock = items.filter((i) => isLow(i) && !i.uncertain);
   const uncertain = items.filter((i) => i.uncertain);
 
@@ -39,7 +41,17 @@ export default function HomeScreen({
     <div className="screen">
       <header className="screen-header">
         <h1 className="screen-title">Home</h1>
-        <ThemeToggle theme={theme} onToggle={onToggleTheme} />
+        <div className="header-actions">
+          <button
+            type="button"
+            className="icon-btn"
+            onClick={() => setShowSettings(true)}
+            aria-label="Open settings"
+          >
+            <IconGear size={19} />
+          </button>
+          <ThemeToggle theme={theme} onToggle={onToggleTheme} />
+        </div>
       </header>
 
       <div className="summary-row">
@@ -158,6 +170,13 @@ export default function HomeScreen({
           onSaveSettings={onSaveSettings}
           onPush={onPushShoppingList}
           onClose={() => setShowList(false)}
+        />
+      )}
+      {showSettings && (
+        <AppSettingsSheet
+          settings={settings}
+          onSave={onSaveSettings}
+          onClose={() => setShowSettings(false)}
         />
       )}
     </div>

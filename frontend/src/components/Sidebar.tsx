@@ -1,10 +1,11 @@
 import type { Tab } from "../types";
-import { IconHome, IconInventory, IconMoon, IconRecipe, IconSun } from "./Icons";
+import { IconHome, IconInventory, IconMoon, IconPlan, IconRecipe, IconSun } from "./Icons";
 
-const sections: { id: Tab; label: string; icon: (props: { size?: number }) => JSX.Element }[] = [
+const allSections: { id: Tab; label: string; icon: (props: { size?: number }) => JSX.Element }[] = [
   { id: "home", label: "Home", icon: IconHome },
   { id: "inventory", label: "Inventory", icon: IconInventory },
   { id: "recipes", label: "Recipes", icon: IconRecipe },
+  { id: "plan", label: "Planning", icon: IconPlan },
 ];
 
 interface SidebarProps {
@@ -12,9 +13,11 @@ interface SidebarProps {
   onChange: (tab: Tab) => void;
   theme: "light" | "dark";
   onToggleTheme: () => void;
+  planningEnabled: boolean;
 }
 
-export default function Sidebar({ active, onChange, theme, onToggleTheme }: SidebarProps) {
+export default function Sidebar({ active, onChange, theme, onToggleTheme, planningEnabled }: SidebarProps) {
+  const sections = planningEnabled ? allSections : allSections.filter((s) => s.id !== "plan");
   return (
     <nav className="sidebar" aria-label="Primary">
       <div className="sidebar-brand">

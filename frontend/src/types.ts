@@ -108,7 +108,56 @@ export interface ShoppingListEntry {
   unit: Unit;
 }
 
-export type Tab = "home" | "inventory" | "recipes";
+export type Tab = "home" | "inventory" | "recipes" | "plan";
+
+export interface PlanPerson {
+  id: string;
+  name: string;
+}
+
+export interface PlanningFill {
+  id: string;
+  mealId: string;
+  recipeId?: string | null;
+  recipeTitle?: string | null;
+  preparedId?: string | null;
+  preparedName?: string | null;
+  portions: number;
+  prepMultiplier: number;
+}
+
+export interface PlanningMeal {
+  id: string;
+  weekStart: string;
+  day: number;
+  meal: string;
+  persons: PlanPerson[];
+  fills: PlanningFill[];
+}
+
+export interface PreparedMeal {
+  id: string;
+  name: string;
+  recipeId?: string | null;
+  portions: number;
+  manual: boolean;
+  placed: number;
+  available: number;
+}
+
+export interface WeekPlan {
+  weekStart: string;
+  persons: PlanPerson[];
+  meals: PlanningMeal[];
+  prepared: PreparedMeal[];
+}
+
+export interface PlanShoppingEntry {
+  itemId?: string | null;
+  name: string;
+  amount: number;
+  unit: Unit;
+}
 
 export interface ModelChoice {
   provider: "local" | "cloud";
@@ -124,6 +173,7 @@ export interface Settings {
   haUrl: string;
   haEntity: string;
   haKeySet: boolean;
+  planningEnabled: boolean;
 }
 
 export interface SettingsPatch {
@@ -135,6 +185,7 @@ export interface SettingsPatch {
   haUrl?: string;
   haToken?: string;
   haEntity?: string;
+  planningEnabled?: boolean;
 }
 
 export interface ModelList {

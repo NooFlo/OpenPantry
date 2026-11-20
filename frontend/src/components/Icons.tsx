@@ -132,6 +132,17 @@ export function IconRecipe(props: IconProps) {
   );
 }
 
+export function IconPlan(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <rect x="3" y="5" width="18" height="16" rx="2" />
+      <path d="M3 10h18" />
+      <path d="M8 3v4M16 3v4" />
+      <path d="M8 14h3M13 14h3M8 17.5h3" />
+    </Svg>
+  );
+}
+
 export function IconMinus(props: IconProps) {
   return (
     <Svg {...props}>

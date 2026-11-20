@@ -10,7 +10,7 @@ from fastapi.responses import HTMLResponse, PlainTextResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import extract, hass, labels, mail, products, repo, seed, telemetry
+from . import extract, hass, labels, mail, planning, products, repo, seed, telemetry
 from .config import get_cloud_config, get_model_choice, set_model_choice
 from .db import init_db
 
@@ -125,6 +125,7 @@ class SettingsRequest(BaseModel):
     ha_url: str | None = None
     ha_token: str | None = None
     ha_entity: str | None = None
+    planning_enabled: bool | None = None
 
 
 def _settings_payload() -> dict:
@@ -138,6 +139,7 @@ def _settings_payload() -> dict:
         "haUrl": hass.get_config()["base_url"],
         "haEntity": hass.get_config()["entity_id"],
         "haKeySet": hass.enabled(),
+        "planningEnabled": (repo.get_setting("planning_enabled", "1") != "0"),
     }
 
 
@@ -167,6 +169,8 @@ def update_settings(body: SettingsRequest):
         repo.set_setting("ha_entity", body.ha_entity.strip())
     if body.ha_url is not None or body.ha_token is not None or body.ha_entity is not None:
         _push_to_ha()
+    if body.planning_enabled is not None:
+        repo.set_setting("planning_enabled", "1" if body.planning_enabled else "0")
     return _settings_payload()
 
 
@@ -828,6 +832,137 @@ def _lemd_response(payload: str, filename: str) -> Response:
 @app.get("/api/health")
 def health():
     return {"ok": True, "llm": extract.llm.available(), "mail": mail.enabled()}
+
+
+class PlanPersonRequest(BaseModel):
+    name: str
+
+
+class PlanMealRequest(BaseModel):
+    week: str
+    day: int
+    meal: str
+    person_ids: list[str] = []
+
+
+class PlanMealPersonRequest(BaseModel):
+    person_id: str
+
+
+class PlanFillRequest(BaseModel):
+    recipe_id: str | None = None
+    prepared_id: str | None = None
+    portions: float = 1
+    prep_multiplier: float = 0
+
+
+class PlanPreparedRequest(BaseModel):
+    name: str
+    portions: float = 1
+
+
+@app.get("/api/plan")
+def get_plan(week: str):
+    try:
+        return camelize(planning.plan_payload(week))
+    except ValueError:
+        raise HTTPException(400, "week must be an ISO date")
+
+
+@app.post("/api/plan/persons")
+def add_plan_person(body: PlanPersonRequest):
+    try:
+        return camelize(planning.add_person(body.name))
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.delete("/api/plan/persons/{person_id}")
+def remove_plan_person(person_id: str):
+    return camelize(planning.remove_person(person_id))
+
+
+@app.post("/api/plan/meals")
+def add_plan_meal(body: PlanMealRequest):
+    try:
+        return camelize(
+            planning.add_meal(body.week, body.day, body.meal, body.person_ids)
+        )
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.post("/api/plan/meals/{meal_id}/persons")
+def toggle_plan_meal_person(meal_id: str, body: PlanMealPersonRequest):
+    try:
+        return camelize(planning.toggle_meal_person(meal_id, body.person_id))
+    except LookupError:
+        raise HTTPException(404, "meal not found")
+
+
+@app.delete("/api/plan/meals/{meal_id}")
+def remove_plan_meal(meal_id: str):
+    try:
+        return camelize(planning.remove_meal(meal_id))
+    except LookupError:
+        raise HTTPException(404, "meal not found")
+
+
+@app.post("/api/plan/meals/{meal_id}/fills")
+def add_plan_fill(meal_id: str, body: PlanFillRequest):
+    try:
+        return camelize(
+            planning.add_fill(
+                meal_id,
+                recipe_id=body.recipe_id,
+                prepared_id=body.prepared_id,
+                portions=body.portions,
+                prep_multiplier=body.prep_multiplier,
+            )
+        )
+    except LookupError as e:
+        raise HTTPException(404, str(e))
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.delete("/api/plan/fills/{fill_id}")
+def remove_plan_fill(fill_id: str):
+    try:
+        return camelize(planning.remove_fill(fill_id))
+    except LookupError:
+        raise HTTPException(404, "fill not found")
+
+
+@app.post("/api/plan/prepared")
+def add_plan_prepared(body: PlanPreparedRequest):
+    try:
+        return camelize(planning.add_prepared(body.name, body.portions))
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.delete("/api/plan/prepared/{prepared_id}")
+def remove_plan_prepared(prepared_id: str):
+    return camelize(planning.remove_prepared(prepared_id))
+
+
+@app.get("/api/plan/{week}/shopping-list")
+def plan_shopping_list(week: str):
+    try:
+        return camelize(planning.week_shopping_list(week))
+    except ValueError:
+        raise HTTPException(400, "week must be an ISO date")
+
+
+@app.post("/api/plan/{week}/shopping-list/push")
+def push_plan_shopping_list(week: str):
+    try:
+        result = camelize(planning.push_week_shopping_list(week))
+    except ValueError:
+        raise HTTPException(400, "week must be an ISO date")
+    _push_to_ha()
+    return result
 
 
 if frontend_dist.exists():

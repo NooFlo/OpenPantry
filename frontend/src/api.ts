@@ -1,4 +1,4 @@
-import type { Item, ItemPatch, ModelList, Receipt, Recipe, RecipeEditPatch, Settings, SettingsPatch, ShoppingListEntry } from "./types";
+import type { Item, ItemPatch, ModelList, PlanShoppingEntry, Receipt, Recipe, RecipeEditPatch, Settings, SettingsPatch, ShoppingListEntry, WeekPlan } from "./types";
 
 const BASE = "/api";
 
@@ -131,7 +131,79 @@ export function updateSettings(patch: SettingsPatch): Promise<Settings> {
   if (patch.haUrl !== undefined) body.ha_url = patch.haUrl;
   if (patch.haToken !== undefined) body.ha_token = patch.haToken;
   if (patch.haEntity !== undefined) body.ha_entity = patch.haEntity;
+  if (patch.planningEnabled !== undefined) body.planning_enabled = patch.planningEnabled;
   return request<Settings>("/settings", { method: "PUT", body: JSON.stringify(body) });
+}
+
+export function fetchWeekPlan(week: string): Promise<WeekPlan> {
+  return request<WeekPlan>(`/plan?week=${encodeURIComponent(week)}`);
+}
+
+export function addPlanPerson(name: string): Promise<WeekPlan> {
+  return request<WeekPlan>("/plan/persons", { method: "POST", body: JSON.stringify({ name }) });
+}
+
+export function deletePlanPerson(id: string): Promise<WeekPlan> {
+  return request<WeekPlan>(`/plan/persons/${id}`, { method: "DELETE" });
+}
+
+export function addPlanMeal(week: string, day: number, meal: string, personIds: string[]): Promise<WeekPlan> {
+  return request<WeekPlan>("/plan/meals", {
+    method: "POST",
+    body: JSON.stringify({ week, day, meal, person_ids: personIds }),
+  });
+}
+
+export function togglePlanMealPerson(mealId: string, personId: string): Promise<WeekPlan> {
+  return request<WeekPlan>(`/plan/meals/${mealId}/persons`, {
+    method: "POST",
+    body: JSON.stringify({ person_id: personId }),
+  });
+}
+
+export function deletePlanMeal(mealId: string): Promise<WeekPlan> {
+  return request<WeekPlan>(`/plan/meals/${mealId}`, { method: "DELETE" });
+}
+
+export function addPlanFill(
+  mealId: string,
+  fill: { recipeId?: string; preparedId?: string; portions: number; prepMultiplier: number }
+): Promise<WeekPlan> {
+  return request<WeekPlan>(`/plan/meals/${mealId}/fills`, {
+    method: "POST",
+    body: JSON.stringify({
+      recipe_id: fill.recipeId,
+      prepared_id: fill.preparedId,
+      portions: fill.portions,
+      prep_multiplier: fill.prepMultiplier,
+    }),
+  });
+}
+
+export function deletePlanFill(fillId: string): Promise<WeekPlan> {
+  return request<WeekPlan>(`/plan/fills/${fillId}`, { method: "DELETE" });
+}
+
+export function addPreparedMeal(name: string, portions: number): Promise<WeekPlan> {
+  return request<WeekPlan>("/plan/prepared", {
+    method: "POST",
+    body: JSON.stringify({ name, portions }),
+  });
+}
+
+export function deletePreparedMeal(id: string): Promise<WeekPlan> {
+  return request<WeekPlan>(`/plan/prepared/${id}`, { method: "DELETE" });
+}
+
+export function fetchPlanShoppingList(week: string): Promise<PlanShoppingEntry[]> {
+  return request<PlanShoppingEntry[]>(`/plan/${encodeURIComponent(week)}/shopping-list`);
+}
+
+export function pushPlanShoppingList(week: string): Promise<ShoppingListEntry[]> {
+  return request<ShoppingListEntry[]>(`/plan/${encodeURIComponent(week)}/shopping-list/push`, {
+    method: "POST",
+    body: "{}",
+  });
 }
 
 export function pushShoppingList(): Promise<{ pushed: boolean }> {

@@ -100,6 +100,41 @@ CREATE TABLE IF NOT EXISTS item_barcodes (
     -- at Aldi, REWE or Edeka all deduct from the same "Eier" stock
     item_id TEXT NOT NULL REFERENCES items(id) ON DELETE CASCADE
 );
+
+CREATE TABLE IF NOT EXISTS plan_persons (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS plan_meals (
+    id TEXT PRIMARY KEY,
+    week_start TEXT NOT NULL,
+    day INTEGER NOT NULL,
+    meal TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS plan_meal_persons (
+    meal_id TEXT NOT NULL REFERENCES plan_meals(id) ON DELETE CASCADE,
+    person_id TEXT NOT NULL REFERENCES plan_persons(id) ON DELETE CASCADE,
+    PRIMARY KEY (meal_id, person_id)
+);
+
+CREATE TABLE IF NOT EXISTS plan_fills (
+    id TEXT PRIMARY KEY,
+    meal_id TEXT NOT NULL REFERENCES plan_meals(id) ON DELETE CASCADE,
+    recipe_id TEXT REFERENCES recipes(id) ON DELETE CASCADE,
+    prepared_id TEXT REFERENCES plan_prepared(id) ON DELETE CASCADE,
+    portions REAL NOT NULL DEFAULT 1,
+    prep_multiplier REAL NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS plan_prepared (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    recipe_id TEXT REFERENCES recipes(id) ON DELETE SET NULL,
+    portions REAL NOT NULL DEFAULT 1,
+    manual INTEGER NOT NULL DEFAULT 0
+);
 """
 
 
@@ -108,6 +143,7 @@ def get_db():
     os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys = ON")
     try:
         yield conn
         conn.commit()

@@ -30,6 +30,7 @@ import Sidebar from "./components/Sidebar";
 import HomeScreen from "./screens/HomeScreen";
 import InventoryScreen from "./screens/InventoryScreen";
 import RecipesScreen from "./screens/RecipesScreen";
+import PlanningScreen from "./screens/PlanningScreen";
 
 type Theme = "light" | "dark";
 
@@ -42,6 +43,7 @@ const DEFAULT_SETTINGS: Settings = {
   haUrl: "",
   haEntity: "todo.shopping_list",
   haKeySet: false,
+  planningEnabled: true,
 };
 
 function initialTheme(): Theme {
@@ -65,6 +67,10 @@ export default function App() {
     document.documentElement.dataset.theme = theme;
     localStorage.setItem("theme", theme);
   }, [theme]);
+
+  useEffect(() => {
+    if (!settings.planningEnabled && tab === "plan") setTab("home");
+  }, [settings.planningEnabled, tab]);
 
   useEffect(() => {
     fetchItems().then(setItems);
@@ -225,7 +231,13 @@ export default function App() {
 
   return (
     <div className="app">
-      <Sidebar active={tab} onChange={setTab} theme={theme} onToggleTheme={toggleTheme} />
+      <Sidebar
+        active={tab}
+        onChange={setTab}
+        theme={theme}
+        onToggleTheme={toggleTheme}
+        planningEnabled={settings.planningEnabled}
+      />
       <main className="app-main">
         {tab === "home" && (
           <HomeScreen
@@ -278,8 +290,11 @@ export default function App() {
             onToggleTheme={toggleTheme}
           />
         )}
+        {tab === "plan" && settings.planningEnabled && (
+          <PlanningScreen recipes={recipes} theme={theme} onToggleTheme={toggleTheme} />
+        )}
       </main>
-      <TabBar active={tab} onChange={setTab} />
+      <TabBar active={tab} onChange={setTab} planningEnabled={settings.planningEnabled} />
     </div>
   );
 }
