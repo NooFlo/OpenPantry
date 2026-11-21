@@ -122,6 +122,8 @@ export interface PlanningFill {
   recipeTitle?: string | null;
   preparedId?: string | null;
   preparedName?: string | null;
+  personId?: string | null;
+  personName?: string | null;
   portions: number;
   prepMultiplier: number;
 }

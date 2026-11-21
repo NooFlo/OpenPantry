@@ -153,3 +153,67 @@ def test_plan_full_flow(client):
     batch_after = next(p for p in plan.json()["prepared"] if p["id"] == batch["id"])
     assert batch_after["placed"] == 0 and batch_after["available"] == base
     client.delete(f"/api/plan/meals/{lunch['id']}")
+
+
+def test_plan_person_targeted_fills(client):
+    week = "2026-02-02"  # a Monday
+    plan = client.get(f"/api/plan?week={week}").json()
+    persons = plan["persons"]
+    assert len(persons) >= 2
+    first, second = persons[0], persons[1]
+
+    # a meal with no persons yet
+    plan = client.post(
+        "/api/plan/meals", json={"week": week, "day": 0, "meal": "Lunch"}
+    ).json()
+    meal = next(m for m in plan["meals"] if m["day"] == 0)
+    assert meal["persons"] == []
+
+    # prepared batch with two portions: whole-field drop auto-attaches both
+    # persons and places one portion per person
+    plan = client.post(
+        "/api/plan/prepared", json={"name": "Goulash", "portions": 3}
+    ).json()
+    goulash = next(p for p in plan["prepared"] if p["name"] == "Goulash")
+    plan = client.post(
+        f"/api/plan/meals/{meal['id']}/fills",
+        json={
+            "prepared_id": goulash["id"],
+            "portions": 2,
+            "person_ids": [first["id"], second["id"]],
+        },
+    ).json()
+    meal = next(m for m in plan["meals"] if m["id"] == meal["id"])
+    assert sorted(p["id"] for p in meal["persons"]) == sorted(
+        [first["id"], second["id"]]
+    )
+    assert len(meal["fills"]) == 1
+    assert meal["fills"][0]["portions"] == 2
+    assert meal["fills"][0]["personId"] is None
+
+    # a second meal: dropping onto one person's half tags the fill and
+    # attaches just that person
+    plan = client.post(
+        "/api/plan/meals", json={"week": week, "day": 1, "meal": "Dinner"}
+    ).json()
+    dinner = next(m for m in plan["meals"] if m["day"] == 1)
+    plan = client.post(
+        f"/api/plan/meals/{dinner['id']}/fills",
+        json={"prepared_id": goulash["id"], "person_id": first["id"]},
+    ).json()
+    dinner = next(m for m in plan["meals"] if m["id"] == dinner["id"])
+    assert [p["id"] for p in dinner["persons"]] == [first["id"]]
+    fill = dinner["fills"][0]
+    assert fill["portions"] == 1
+    assert fill["personId"] == first["id"]
+    assert fill["personName"] == first["name"]
+    # both portions of the batch are placed now
+    batch = next(p for p in plan["prepared"] if p["id"] == goulash["id"])
+    assert batch["available"] == 0 and batch["placed"] == 3
+
+    # deleting the second meal frees its portion again
+    plan = client.delete(f"/api/plan/meals/{dinner['id']}").json()
+    batch = next(p for p in plan["prepared"] if p["id"] == goulash["id"])
+    assert batch["available"] == 1
+    client.delete(f"/api/plan/meals/{meal['id']}")
+    client.delete(f"/api/plan/prepared/{goulash['id']}")

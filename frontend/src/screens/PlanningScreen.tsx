@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
-import type { PreparedMeal, Recipe, PlanShoppingEntry, PlanningFill, PlanningMeal, WeekPlan } from "../types";
+import type { DragEvent } from "react";
+import type { PlanPerson, PreparedMeal, Recipe, PlanShoppingEntry, PlanningFill, PlanningMeal, WeekPlan } from "../types";
 import {
   addPlanFill,
   addPlanMeal,
@@ -79,9 +80,57 @@ export default function PlanningScreen({ recipes, theme, onToggleTheme }: Planni
 
   const openFill = (drag: DragPayload, mealId?: string) => setFillSheet({ drag, mealId });
 
-  const handleDrop = (mealId: string, text: string | undefined) => {
+  /** Direct drop placement: no sheet. A drop on a person's half targets that
+   * person (one portion); a drop on the whole field feeds the meal's persons
+   * — or all persons when none are attached yet — one portion each, capped
+   * by how many portions of a prepared meal are left. */
+  const doPlace = async (
+    drag: DragPayload,
+    meal: PlanningMeal,
+    personId: string | null,
+    planState: WeekPlan | null = plan
+  ) => {
+    const all = planState?.persons ?? [];
+    const targets = personId
+      ? [personId]
+      : meal.persons.length > 0
+        ? meal.persons.map((p) => p.id)
+        : all.map((p) => p.id);
+    const prepared = drag.kind === "prepared" ? planState?.prepared.find((p) => p.id === drag.id) : undefined;
+    const wanted = Math.max(1, targets.length);
+    const portions = personId ? 1 : prepared ? Math.min(wanted, Math.max(1, prepared.available)) : wanted;
+    const updated = await addPlanFill(meal.id, {
+      recipeId: drag.kind === "recipe" ? drag.id : undefined,
+      preparedId: drag.kind === "prepared" ? drag.id : undefined,
+      portions,
+      prepMultiplier: 0,
+      personId: personId ?? undefined,
+      personIds: targets,
+    });
+    setPlan(updated);
+  };
+
+  /** Drop on a day column: into the only meal, auto-create one when the day
+   * is empty (all persons), chooser sheet only when genuinely ambiguous. */
+  const handleDayDrop = async (day: number, text: string | undefined) => {
     const drag = parseDrag(text);
-    if (drag) openFill(drag, mealId);
+    if (!drag) return;
+    const dayMeals = mealsByDay[day];
+    if (dayMeals.length === 1) {
+      await doPlace(drag, dayMeals[0], null);
+      return;
+    }
+    if (dayMeals.length > 1) {
+      openFill(drag);
+      return;
+    }
+    const updated = await addPlanMeal(week, day, "Lunch", (plan?.persons ?? []).map((p) => p.id));
+    const created = updated.meals.filter((m) => m.day === day).slice(-1)[0];
+    if (created) {
+      await doPlace(drag, created, null, updated);
+    } else {
+      setPlan(updated);
+    }
   };
 
   const mealsByDay = useMemo(() => {
@@ -148,7 +197,7 @@ export default function PlanningScreen({ recipes, theme, onToggleTheme }: Planni
                 draggable
                 onDragStart={(e) => e.dataTransfer.setData("text/plain", `recipe:${r.id}`)}
                 onClick={() => openFill({ kind: "recipe", id: r.id })}
-                title="Drag onto a meal — or tap to place"
+                title="Drop on a meal field to place directly — or tap for options"
               >
                 {r.title}
               </div>
@@ -165,9 +214,7 @@ export default function PlanningScreen({ recipes, theme, onToggleTheme }: Planni
               onDragOver={(e) => e.preventDefault()}
               onDrop={(e) => {
                 e.preventDefault();
-                const drag = parseDrag(e.dataTransfer.getData("text/plain"));
-                if (!drag) return;
-                openFill(drag);
+                handleDayDrop(day, e.dataTransfer.getData("text/plain"));
               }}
             >
               <div className="plan-day-head">
@@ -182,7 +229,8 @@ export default function PlanningScreen({ recipes, theme, onToggleTheme }: Planni
                 <MealCard
                   key={meal.id}
                   meal={meal}
-                  onDrop={handleDrop}
+                  planPersons={plan?.persons ?? []}
+                  onPlace={(drag, personId) => doPlace(drag, meal, personId)}
                   onTogglePerson={(personId) => togglePlanMealPerson(meal.id, personId).then(setPlan)}
                   onDelete={() => deletePlanMeal(meal.id).then(setPlan)}
                   onRemoveFill={(fill) => deletePlanFill(fill.id).then(setPlan)}
@@ -262,28 +310,60 @@ export default function PlanningScreen({ recipes, theme, onToggleTheme }: Planni
 
 interface MealCardProps {
   meal: PlanningMeal;
-  onDrop: (mealId: string, text: string | undefined) => void;
+  planPersons: PlanPerson[];
+  onPlace: (drag: DragPayload, personId: string | null) => void;
   onTogglePerson: (personId: string) => void;
   onChangePersons: () => void;
   onDelete: () => void;
   onRemoveFill: (fill: PlanningFill) => void;
 }
 
-function MealCard({ meal, onDrop, onTogglePerson, onChangePersons, onDelete, onRemoveFill }: MealCardProps) {
-  const [dragOver, setDragOver] = useState(false);
+function FillRow({ fill, onRemoveFill }: { fill: PlanningFill; onRemoveFill: (fill: PlanningFill) => void }) {
+  return (
+    <div className="plan-fill">
+      <span className="plan-fill-name">{fill.recipeTitle ?? fill.preparedName}</span>
+      <span className="plan-fill-qty">
+        {fill.portions} {fill.recipeId ? "p" : ""}
+      </span>
+      <button className="icon-btn" aria-label="Remove" onClick={() => onRemoveFill(fill)}>
+        <IconX size={13} />
+      </button>
+    </div>
+  );
+}
+
+function MealCard({
+  meal,
+  planPersons,
+  onPlace,
+  onTogglePerson,
+  onChangePersons,
+  onDelete,
+  onRemoveFill,
+}: MealCardProps) {
+  // hover: "card" while dragging over the whole field, or the person id of
+  // the half being targeted
+  const [hover, setHover] = useState<string | null>(null);
+  const halves = planPersons.length >= 2 ? planPersons : [];
+  const shared = meal.fills.filter((f) => !f.personId);
+
+  const drop = (e: DragEvent, personId: string | null) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setHover(null);
+    const drag = parseDrag(e.dataTransfer.getData("text/plain"));
+    if (drag) onPlace(drag, personId);
+  };
+
   return (
     <div
-      className={dragOver ? "plan-meal over" : "plan-meal"}
+      className={hover === "card" ? "plan-meal over" : "plan-meal"}
       onDragOver={(e) => {
         e.preventDefault();
-        setDragOver(true);
+        setHover((h) => h ?? "card");
       }}
-      onDragLeave={() => setDragOver(false)}
-      onDrop={(e) => {
-        e.preventDefault();
-        setDragOver(false);
-        onDrop(meal.id, e.dataTransfer.getData("text/plain"));
-      }}
+      onDragLeave={() => setHover((h) => (h === "card" ? null : h))}
+      onDrop={(e) => drop(e, null)}
     >
       <div className="plan-meal-head">
         <span className="plan-meal-name">{meal.meal}</span>
@@ -306,20 +386,48 @@ function MealCard({ meal, onDrop, onTogglePerson, onChangePersons, onDelete, onR
           +
         </button>
       </div>
-      {meal.fills.length === 0 ? (
+      {halves.length >= 2 ? (
+        <>
+          <div className="plan-halves">
+            {halves.map((p) => {
+              const fills = meal.fills.filter((f) => f.personId === p.id);
+              return (
+                <div
+                  key={p.id}
+                  className={hover === p.id ? "plan-half over" : "plan-half"}
+                  onDragOver={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    setHover(p.id);
+                  }}
+                  onDragLeave={(e) => {
+                    e.stopPropagation();
+                    setHover((h) => (h === p.id ? null : h));
+                  }}
+                  onDrop={(e) => drop(e, p.id)}
+                >
+                  <span className="plan-half-name">{p.name}</span>
+                  {fills.map((fill) => (
+                    <FillRow key={fill.id} fill={fill} onRemoveFill={onRemoveFill} />
+                  ))}
+                  {fills.length === 0 && meal.fills.length === 0 && (
+                    <div className="plan-half-empty">Drop here</div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+          {shared.length === 0 && meal.fills.length === 0 && (
+            <div className="plan-meal-empty">Drop for everyone</div>
+          )}
+          {shared.map((fill) => (
+            <FillRow key={fill.id} fill={fill} onRemoveFill={onRemoveFill} />
+          ))}
+        </>
+      ) : meal.fills.length === 0 ? (
         <div className="plan-meal-empty">Drop a recipe or prepared meal here</div>
       ) : (
-        meal.fills.map((fill) => (
-          <div key={fill.id} className="plan-fill">
-            <span className="plan-fill-name">{fill.recipeTitle ?? fill.preparedName}</span>
-            <span className="plan-fill-qty">
-              {fill.portions} {fill.recipeId ? "p" : ""}
-            </span>
-            <button className="icon-btn" aria-label="Remove" onClick={() => onRemoveFill(fill)}>
-              <IconX size={13} />
-            </button>
-          </div>
-        ))
+        meal.fills.map((fill) => <FillRow key={fill.id} fill={fill} onRemoveFill={onRemoveFill} />)
       )}
     </div>
   );
@@ -341,7 +449,7 @@ function PreparedRow({
       draggable={prepared.available > 0}
       onDragStart={(e) => e.dataTransfer.setData("text/plain", `prepared:${prepared.id}`)}
       onClick={() => prepared.available > 0 && onPlace()}
-      title={prepared.available > 0 ? "Drag onto a meal — or tap to place" : "Fully placed"}
+      title={prepared.available > 0 ? "Drop on a meal field to place directly — or tap for options" : "Fully placed"}
     >
       <div className="plan-prepared-name">{prepared.name}</div>
       <div className="plan-prepared-count">
@@ -449,6 +557,7 @@ function FillSheet({
             plan!.meals.map((m) => (
               <button key={m.id} className="plan-meal-chip" onClick={() => setTarget(m.id)}>
                 {DAY_NAMES[m.day]} · {m.meal}
+                {m.persons.length > 0 && <span className="plan-meal-chip-persons"> · {m.persons.map((p) => p.name).join(", ")}</span>}
               </button>
             ))
           )}

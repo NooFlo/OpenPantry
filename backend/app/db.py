@@ -124,6 +124,7 @@ CREATE TABLE IF NOT EXISTS plan_fills (
     meal_id TEXT NOT NULL REFERENCES plan_meals(id) ON DELETE CASCADE,
     recipe_id TEXT REFERENCES recipes(id) ON DELETE CASCADE,
     prepared_id TEXT REFERENCES plan_prepared(id) ON DELETE CASCADE,
+    person_id TEXT REFERENCES plan_persons(id) ON DELETE SET NULL,
     portions REAL NOT NULL DEFAULT 1,
     prep_multiplier REAL NOT NULL DEFAULT 0
 );
@@ -197,3 +198,10 @@ def init_db():
         # (qty) shown behind them is computed from the portions at render
         if "step_ingredients_json" not in recipe_columns:
             db.execute("ALTER TABLE recipes ADD COLUMN step_ingredients_json TEXT")
+        # per-person fills: dropping onto a divided meal field records
+        # which person the portion is for
+        fill_columns = {row["name"] for row in db.execute("PRAGMA table_info(plan_fills)")}
+        if "person_id" not in fill_columns:
+            db.execute("ALTER TABLE plan_fills ADD COLUMN person_id TEXT")
+            db.execute("UPDATE plan_fills SET person_id = NULL")
+

@@ -33,10 +33,12 @@ def _fills_for(db, meal_ids: list[str]) -> dict[str, list[dict]]:
         return {}
     marks = ",".join("?" for _ in meal_ids)
     rows = db.execute(
-        f"SELECT f.*, r.title AS recipe_title, pp.name AS prepared_name"
+        f"SELECT f.*, r.title AS recipe_title, pp.name AS prepared_name, pr.name AS person_name,"
+        f" CASE WHEN pr.id IS NULL THEN NULL ELSE f.person_id END AS person_id"
         f" FROM plan_fills f"
         f" LEFT JOIN recipes r ON r.id = f.recipe_id"
         f" LEFT JOIN plan_prepared pp ON pp.id = f.prepared_id"
+        f" LEFT JOIN plan_persons pr ON pr.id = f.person_id"
         f" WHERE f.meal_id IN ({marks}) ORDER BY f.portions",
         meal_ids,
     ).fetchall()
@@ -50,6 +52,8 @@ def _fills_for(db, meal_ids: list[str]) -> dict[str, list[dict]]:
                 "recipe_title": row["recipe_title"],
                 "prepared_id": row["prepared_id"],
                 "prepared_name": row["prepared_name"],
+                "person_id": row["person_id"],
+                "person_name": row["person_name"],
                 "portions": row["portions"],
                 "prep_multiplier": row["prep_multiplier"],
             }
@@ -203,13 +207,26 @@ def add_fill(
     prepared_id: str | None = None,
     portions: float = 1,
     prep_multiplier: float = 0,
+    person_id: str | None = None,
+    person_ids: list[str] | None = None,
 ) -> dict:
+    """Add a fill to a meal. `person_ids` are attached to the meal (who eats
+    it, if not linked yet); `person_id` additionally tags the fill itself, for
+    drops onto a divided per-person field."""
     if (recipe_id is None) == (prepared_id is None):
         raise ValueError("exactly one of recipe_id or prepared_id is required")
     with get_db() as db:
         week = _week_of_meal(db, meal_id)
         if week is None:
             raise LookupError("meal not found")
+        attach = [pid for pid in (person_ids or []) if pid]
+        if person_id and person_id not in attach:
+            attach.append(person_id)
+        for pid in attach:
+            db.execute(
+                "INSERT OR IGNORE INTO plan_meal_persons (meal_id, person_id) VALUES (?, ?)",
+                (meal_id, pid),
+            )
         placed_portions = max(1, round(portions))
         if prepared_id:
             row = db.execute("SELECT * FROM plan_prepared WHERE id = ?", (prepared_id,)).fetchone()
@@ -220,8 +237,8 @@ def add_fill(
                 raise ValueError("no portions of this prepared meal left")
             placed_portions = min(placed_portions, int(available))
             db.execute(
-                "INSERT INTO plan_fills (id, meal_id, prepared_id, portions) VALUES (?, ?, ?, ?)",
-                (new_id(), meal_id, prepared_id, placed_portions),
+                "INSERT INTO plan_fills (id, meal_id, prepared_id, person_id, portions) VALUES (?, ?, ?, ?, ?)",
+                (new_id(), meal_id, prepared_id, person_id, placed_portions),
             )
         else:
             recipe = repo_get_recipe(recipe_id)
@@ -234,9 +251,9 @@ def add_fill(
                     (new_id(), f"{recipe['title']} (prep)", recipe_id, prep * max(1, recipe["base_portions"] or 1)),
                 )
             db.execute(
-                "INSERT INTO plan_fills (id, meal_id, recipe_id, portions, prep_multiplier)"
-                " VALUES (?, ?, ?, ?, ?)",
-                (new_id(), meal_id, recipe_id, max(1, round(portions)), prep),
+                "INSERT INTO plan_fills (id, meal_id, recipe_id, person_id, portions, prep_multiplier)"
+                " VALUES (?, ?, ?, ?, ?, ?)",
+                (new_id(), meal_id, recipe_id, person_id, max(1, round(portions)), prep),
             )
     return plan_payload(week)
 

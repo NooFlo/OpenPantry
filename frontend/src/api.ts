@@ -167,7 +167,14 @@ export function deletePlanMeal(mealId: string): Promise<WeekPlan> {
 
 export function addPlanFill(
   mealId: string,
-  fill: { recipeId?: string; preparedId?: string; portions: number; prepMultiplier: number }
+  fill: {
+    recipeId?: string;
+    preparedId?: string;
+    portions: number;
+    prepMultiplier: number;
+    personId?: string;
+    personIds?: string[];
+  }
 ): Promise<WeekPlan> {
   return request<WeekPlan>(`/plan/meals/${mealId}/fills`, {
     method: "POST",
@@ -176,6 +183,8 @@ export function addPlanFill(
       prepared_id: fill.preparedId,
       portions: fill.portions,
       prep_multiplier: fill.prepMultiplier,
+      person_id: fill.personId,
+      person_ids: fill.personIds,
     }),
   });
 }

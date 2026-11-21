@@ -854,6 +854,10 @@ class PlanFillRequest(BaseModel):
     prepared_id: str | None = None
     portions: float = 1
     prep_multiplier: float = 0
+    # fill-level target (drop onto a divided per-person field)
+    person_id: str | None = None
+    # persons who eat this meal; auto-attached if missing (whole-field drop)
+    person_ids: list[str] = []
 
 
 class PlanPreparedRequest(BaseModel):
@@ -918,6 +922,8 @@ def add_plan_fill(meal_id: str, body: PlanFillRequest):
                 prepared_id=body.prepared_id,
                 portions=body.portions,
                 prep_multiplier=body.prep_multiplier,
+                person_id=body.person_id,
+                person_ids=body.person_ids,
             )
         )
     except LookupError as e:

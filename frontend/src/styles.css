@@ -2186,6 +2186,56 @@ button.summary-card {
   white-space: nowrap;
 }
 
+/* divided meal field: one half per person, each its own drop target */
+.plan-halves {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(60px, 1fr));
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.plan-half {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 4px 5px;
+  min-height: 46px;
+}
+
+.plan-half + .plan-half {
+  border-left: 1px solid var(--border);
+}
+
+.plan-half.over {
+  background: var(--accent-soft);
+}
+
+.plan-half-name {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-3);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.plan-half-empty {
+  font-size: 10px;
+  color: var(--text-3);
+  text-align: center;
+  margin: auto 0;
+}
+
+.plan-half .plan-fill {
+  padding: 3px 5px;
+  font-size: 11px;
+}
+
+.plan-meal-chip-persons {
+  color: var(--text-3);
+  font-size: 12px;
+}
+
 .plan-meal-chip {
   display: block;
   width: 100%;
