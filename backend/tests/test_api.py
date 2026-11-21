@@ -1068,3 +1068,20 @@ def test_buy_amount_overrides_package_size_on_shopping_list(client):
     entry = next(e for e in entries if e.get("itemId") == iid)
     assert entry["amount"] == 2.0  # the buy amount, not the 0.5 l package
     client.delete(f"/api/items/{iid}")
+
+
+def test_update_without_barcode_keeps_the_items_barcodes(client):
+    """Settings saves must never wipe barcodes; only an explicit barcode
+    patch (empty = clear) touches them."""
+    item = repo.create_item(name="Scanfix Behalten", barcode="2098765000024")
+    iid = item["id"]
+    for patch in ({"min_quantity": 2}, {"tracking_mode": "qty"}, {"package_size": 0.5}):
+        assert client.post(f"/api/items/{iid}/update", json=patch).status_code == 200
+    body = client.post("/api/barcode/lookup", json={"barcode": "2098765000024"}).json()
+    assert body["status"] == "known" and body["item"]["barcodes"] == ["2098765000024"]
+    lookup = lambda: client.post("/api/barcode/lookup", json={"barcode": "2098765000024"}).json()
+    assert lookup()["item"]["quantity"] == 0  # settings saves never restock
+    # explicit blank clears on purpose
+    client.post(f"/api/items/{iid}/update", json={"barcode": ""})
+    assert lookup()["status"] in ("unknown", "not_found")
+    client.delete(f"/api/items/{iid}")

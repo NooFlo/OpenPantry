@@ -497,7 +497,7 @@ def update_item(item_id: str, body: ItemUpdateRequest):
         raise HTTPException(400, "buy_amount must be > 0")
     if body.tracking_mode is not None and body.tracking_mode not in ("binary", "qty"):
         raise HTTPException(400, "tracking_mode must be 'binary' or 'qty'")
-    new_barcode = None
+    new_barcode = repo._UNSET  # unset = leave the barcodes alone
     if body.barcode is not None:
         cleaned = re.sub(r"\D", "", body.barcode)
         if body.barcode.strip():
@@ -507,7 +507,8 @@ def update_item(item_id: str, body: ItemUpdateRequest):
             if clash and clash["id"] != item_id:
                 raise HTTPException(409, f"barcode already used by {clash['name']}")
             new_barcode = cleaned
-        # an empty barcode clears the mapping
+        else:
+            new_barcode = None  # an empty barcode clears the mapping
     item = repo.update_item(item_id, body.min_quantity, body.package_size,
                             body.tracking_mode, buy_amount=body.buy_amount,
                             barcode=new_barcode)
