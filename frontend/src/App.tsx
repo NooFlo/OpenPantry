@@ -139,6 +139,9 @@ export default function App() {
     updateSettings(patch).then(setSettings).catch(console.error);
   };
 
+  const mergeItem = (updated: Item) =>
+    setItems((prev) => prev.map((i) => (i.id === updated.id ? updated : i)));
+
   const consume = (id: string, amount: number) => {
     setItems((prev) =>
       prev.map((i) =>
@@ -150,7 +153,7 @@ export default function App() {
       )
     );
     consumeItem(id, amount)
-      .then(() => fetchShoppingList())
+      .then((updated) => { mergeItem(updated); return fetchShoppingList(); })
       .then(setShoppingList)
       .catch(console.error);
   };
@@ -164,7 +167,7 @@ export default function App() {
       )
     );
     restockItem(id, amount)
-      .then(() => fetchShoppingList())
+      .then((updated) => { mergeItem(updated); return fetchShoppingList(); })
       .then(setShoppingList)
       .catch(console.error);
   };
@@ -202,11 +205,8 @@ export default function App() {
           : i
       )
     );
-    updateItem(id, patch).catch(console.error);
+    updateItem(id, patch).then(mergeItem).catch(console.error);
   };
-
-  const mergeItem = (updated: Item) =>
-    setItems((prev) => prev.map((i) => (i.id === updated.id ? updated : i)));
 
   const onAddItemBarcode = (id: string, barcode: string) => {
     addItemBarcode(id, barcode).then(mergeItem).catch(console.error);
