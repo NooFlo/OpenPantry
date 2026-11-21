@@ -77,6 +77,7 @@ class ItemUpdateRequest(BaseModel):
     package_size: float | None = None
     tracking_mode: str | None = None
     buy_amount: float | None = None
+    auto_restock: bool | None = None
     barcode: str | None = None
 
 
@@ -511,6 +512,7 @@ def update_item(item_id: str, body: ItemUpdateRequest):
             new_barcode = None  # an empty barcode clears the mapping
     item = repo.update_item(item_id, body.min_quantity, body.package_size,
                             body.tracking_mode, buy_amount=body.buy_amount,
+                            auto_restock=body.auto_restock,
                             barcode=new_barcode)
     if not item:
         raise HTTPException(404, "item not found")

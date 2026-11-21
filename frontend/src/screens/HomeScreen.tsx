@@ -34,7 +34,9 @@ export default function HomeScreen({
 }: HomeScreenProps) {
   const [showList, setShowList] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
-  const lowStock = items.filter((i) => isLow(i) && !i.uncertain);
+  const lowStock = items.filter(
+    (i) => isLow(i) && !i.uncertain && (i.autoRestock || i.minQuantity > 0)
+  );
   const uncertain = items.filter((i) => i.uncertain);
 
   return (

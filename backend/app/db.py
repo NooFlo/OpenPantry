@@ -19,7 +19,8 @@ CREATE TABLE IF NOT EXISTS items (
     barcode TEXT,
     uncertain INTEGER NOT NULL DEFAULT 0,
     tracking_mode TEXT NOT NULL DEFAULT 'binary',
-    buy_amount REAL
+    buy_amount REAL,
+    auto_restock INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS receipts (
@@ -164,6 +165,8 @@ def init_db():
         item_columns = {row["name"] for row in db.execute("PRAGMA table_info(items)")}
         if "buy_amount" not in item_columns:
             db.execute("ALTER TABLE items ADD COLUMN buy_amount REAL")
+        if "auto_restock" not in item_columns:
+            db.execute("ALTER TABLE items ADD COLUMN auto_restock INTEGER NOT NULL DEFAULT 0")
         if "tracking_mode" not in item_columns:
             db.execute("ALTER TABLE items ADD COLUMN tracking_mode TEXT NOT NULL DEFAULT 'binary'")
             # data-entry heuristic: a single entered unit is binary,

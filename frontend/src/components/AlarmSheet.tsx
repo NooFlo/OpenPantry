@@ -72,6 +72,24 @@ export function ItemSettings({ item, onUpdate, onAddBarcode, onRemoveBarcode }: 
           : "Tracks a rounded stock count. Recipes compare their exact amounts against it."}
       </p>
 
+      <div className="stepper-row active" style={{ alignItems: "center" }}>
+        <div style={{ flex: 1 }}>
+          <div className="stepper-label">Always restock</div>
+          <p className="stepper-hint" style={{ margin: 0 }}>
+            Automatically added to the shopping list once empty. Without this
+            or an alarm, an emptied item stays off the list and the homepage.
+          </p>
+        </div>
+        <input
+          type="checkbox"
+          role="switch"
+          aria-label="Always restock"
+          style={{ width: 22, height: 22, accentColor: "var(--accent, #e8590c)" }}
+          checked={!!item.autoRestock}
+          onChange={(e) => onUpdate(item.id, { auto_restock: e.target.checked })}
+        />
+      </div>
+
       {!binary && (
         <StepperRow
           label="Alarm at"

@@ -201,6 +201,7 @@ export default function App() {
               minQuantity: patch.min_quantity ?? i.minQuantity,
               packageSize: patch.package_size ?? i.packageSize,
               buyAmount: patch.buy_amount ?? i.buyAmount,
+              autoRestock: patch.auto_restock ?? i.autoRestock,
               trackingMode: patch.tracking_mode ?? i.trackingMode,
             }
           : i
