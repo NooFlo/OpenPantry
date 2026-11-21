@@ -159,7 +159,7 @@ export default function PlanningScreen({ recipes, theme, onToggleTheme }: Planni
           ‹
         </button>
         <span className="week-label">
-          {`Week of ${week}`} · {(plan?.meals.length ?? 0)} meals
+          {`Week of ${week}`} · {(plan?.meals ?? []).filter((m) => m.fills.length > 0).length} planned
         </span>
         <button className="icon-btn" aria-label="Next week" onClick={() => setWeek(addDays(week, 7))}>
           ›
@@ -207,7 +207,12 @@ export default function PlanningScreen({ recipes, theme, onToggleTheme }: Planni
         </aside>
 
         <div className="plan-board">
-          {DAY_NAMES.map((name, day) => (
+          {DAY_NAMES.map((name, day) => {
+            const dayMeals = mealsByDay[day] ?? [];
+            const lunch = dayMeals.find((m) => m.meal === "Lunch");
+            const dinner = dayMeals.find((m) => m.meal === "Dinner");
+            const extras = dayMeals.filter((m) => m !== lunch && m !== dinner);
+            return (
             <div
               key={name}
               className="plan-day"
@@ -224,24 +229,58 @@ export default function PlanningScreen({ recipes, theme, onToggleTheme }: Planni
                   <IconPlus size={15} />
                 </button>
               </div>
-              {mealsByDay[day].length === 0 && <div className="plan-day-empty">No meals</div>}
-              {mealsByDay[day].map((meal) => (
+              {lunch && (
                 <MealCard
-                  key={meal.id}
-                  meal={meal}
+                  key={lunch.id}
+                  meal={lunch}
                   planPersons={plan?.persons ?? []}
-                  onPlace={(drag, personId) => doPlace(drag, meal, personId)}
-                  onTogglePerson={(personId) => togglePlanMealPerson(meal.id, personId).then(setPlan)}
-                  onDelete={() => deletePlanMeal(meal.id).then(setPlan)}
+                  onPlace={(drag, personId) => doPlace(drag, lunch, personId)}
+                  onTogglePerson={(personId) => togglePlanMealPerson(lunch.id, personId).then(setPlan)}
+                  onDelete={() => deletePlanMeal(lunch.id).then(setPlan)}
                   onRemoveFill={(fill) => deletePlanFill(fill.id).then(setPlan)}
                   onChangePersons={() => {
-                    setEditingMeal(meal.id);
+                    setEditingMeal(lunch.id);
                     setPersonsSheet(true);
                   }}
                 />
-              ))}
+              )}
+              {dinner && (
+                <MealCard
+                  key={dinner.id}
+                  meal={dinner}
+                  planPersons={plan?.persons ?? []}
+                  onPlace={(drag, personId) => doPlace(drag, dinner, personId)}
+                  onTogglePerson={(personId) => togglePlanMealPerson(dinner.id, personId).then(setPlan)}
+                  onDelete={() => deletePlanMeal(dinner.id).then(setPlan)}
+                  onRemoveFill={(fill) => deletePlanFill(fill.id).then(setPlan)}
+                  onChangePersons={() => {
+                    setEditingMeal(dinner.id);
+                    setPersonsSheet(true);
+                  }}
+                />
+              )}
+              {extras.length > 0 && (
+                <div className="plan-day-extras">
+                  {extras.map((meal) => (
+                    <MealCard
+                      key={meal.id}
+                      meal={meal}
+                      planPersons={plan?.persons ?? []}
+                      onPlace={(drag, personId) => doPlace(drag, meal, personId)}
+                      onTogglePerson={(personId) => togglePlanMealPerson(meal.id, personId).then(setPlan)}
+                      onDelete={() => deletePlanMeal(meal.id).then(setPlan)}
+                      onRemoveFill={(fill) => deletePlanFill(fill.id).then(setPlan)}
+                      onChangePersons={() => {
+                        setEditingMeal(meal.id);
+                        setPersonsSheet(true);
+                      }}
+                    />
+                  ))}
+                </div>
+              )}
             </div>
-          ))}
+            );
+          })}
         </div>
       </div>
 
@@ -371,9 +410,11 @@ function MealCard({
           <button className="icon-btn" aria-label="Edit persons" onClick={onChangePersons}>
             <IconPlus size={14} />
           </button>
-          <button className="icon-btn" aria-label="Remove meal" onClick={onDelete}>
-            <IconX size={14} />
-          </button>
+          {(meal.meal !== "Lunch" && meal.meal !== "Dinner") && (
+            <button className="icon-btn" aria-label="Remove meal" onClick={onDelete}>
+              <IconX size={14} />
+            </button>
+          )}
         </div>
       </div>
       <div className="plan-meal-persons">

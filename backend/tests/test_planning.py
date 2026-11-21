@@ -45,28 +45,34 @@ def test_plan_full_flow(client):
     plan = client.get(f"/api/plan?week={week}").json()
     assert plan["weekStart"] == week
 
-    persons = client.post("/api/plan/persons", json={"name": "Anna"}).json()
-    persons = client.post("/api/plan/persons", json={"name": "Ben"}).json()
-    anna = next(p for p in persons["persons"] if p["name"] == "Anna")
-    ben = next(p for p in persons["persons"] if p["name"] == "Ben")
+    # fixed slots: every day carries Lunch then Dinner, aligned across days
+    days: dict[int, list[str]] = {}
+    for m in plan["meals"]:
+        days.setdefault(m["day"], []).append(m["meal"])
+    assert len(plan["meals"]) == 14
+    for day in range(7):
+        assert days[day][:2] == ["Lunch", "Dinner"]
 
-    # Wednesday: Anna has lunch+dinner, Ben only dinner
+    # persons attach to every slot as soon as they exist
+    client.post("/api/plan/persons", json={"name": "Anna"})
+    persons = client.post("/api/plan/persons", json={"name": "Ben"}).json()["persons"]
+    anna = next(p for p in persons if p["name"] == "Anna")
+    ben = next(p for p in persons if p["name"] == "Ben")
+    plan = client.get(f"/api/plan?week={week}").json()
+    assert all(
+        sorted(p["name"] for p in m["persons"]) == ["Anna", "Ben"]
+        for m in plan["meals"]
+    )
+
+    # re-adding a fixed slot reuses it — no duplicates
     plan = client.post(
         "/api/plan/meals",
         json={"week": week, "day": 2, "meal": "Lunch", "person_ids": [anna["id"]]},
     ).json()
-    assert len(plan["meals"]) == 1
-    lunch = plan["meals"][0]
-    assert [p["name"] for p in lunch["persons"]] == ["Anna"]
-
-    plan = client.post(
-        "/api/plan/meals",
-        json={"week": week, "day": 2, "meal": "Dinner", "person_ids": [anna["id"]]},
-    ).json()
+    lunches = [m for m in plan["meals"] if m["day"] == 2 and m["meal"] == "Lunch"]
+    assert len(lunches) == 1
+    lunch = lunches[0]
     dinner = next(m for m in plan["meals"] if m["day"] == 2 and m["meal"] == "Dinner")
-    plan = client.post(f"/api/plan/meals/{dinner['id']}/persons", json={"person_id": ben["id"]}).json()
-    dinner = next(m for m in plan["meals"] if m["id"] == dinner["id"])
-    assert sorted(p["name"] for p in dinner["persons"]) == ["Anna", "Ben"]
 
     recipes = client.get("/api/recipes").json()
     recipe = next(r for r in recipes if r["ingredients"] and r["basePortions"])
@@ -83,7 +89,8 @@ def test_plan_full_flow(client):
         f"/api/plan/meals/{lunch['id']}/fills",
         json={"recipe_id": recipe["id"], "portions": 2, "prep_multiplier": 1},
     ).json()
-    fill = plan["meals"][0]["fills"][0]
+    lunch = next(m for m in plan["meals"] if m["id"] == lunch["id"])
+    fill = lunch["fills"][0]
     assert fill["portions"] == 2 and fill["prepMultiplier"] == 1
     prepared = plan["prepared"]
     assert len(prepared) == 1
@@ -102,22 +109,42 @@ def test_plan_full_flow(client):
     assert batch_now["placed"] == placed_expected
     assert batch_now["available"] == base - placed_expected
 
-    # over-placement is rejected once the batch is used up
-    other = client.post("/api/plan/meals", json={"week": week, "day": 4, "meal": "Dinner"}).json()
-    friday = next(m for m in other["meals"] if m["day"] == 4)
+    # every day owns a Dinner slot — Friday's is ready for over-placement
+    plan = client.get(f"/api/plan?week={week}").json()
+    friday_dinner = next(m for m in plan["meals"] if m["day"] == 4 and m["meal"] == "Dinner")
     leftover = base - placed_expected
     over = client.post(
-        f"/api/plan/meals/{friday['id']}/fills",
+        f"/api/plan/meals/{friday_dinner['id']}/fills",
         json={"prepared_id": batch["id"], "portions": leftover + 1},
     )
     if leftover > 0:
         assert over.status_code == 200
-        clamped = over.json()["meals"][0]["fills"][0]
+        clamped = next(
+            m for m in over.json()["meals"] if m["id"] == friday_dinner["id"]
+        )["fills"][0]
         assert clamped["portions"] == leftover
     else:
         assert over.status_code == 400
-    client.delete(f"/api/plan/meals/{friday['id']}")
 
+    # fixed slots cannot be deleted...
+    refused = client.delete(f"/api/plan/meals/{friday_dinner['id']}")
+    assert refused.status_code == 400
+    # ...but removing their fills frees the batch again
+    if leftover > 0:
+        del_fill = next(
+            m for m in over.json()["meals"] if m["id"] == friday_dinner["id"]
+        )["fills"][0]
+        plan = client.delete(f"/api/plan/fills/{del_fill['id']}").json()
+        batch_after = next(p for p in plan["prepared"] if p["id"] == batch["id"])
+        assert batch_after["placed"] == placed_expected
+
+    # ...custom meals can still be added and removed
+    plan = client.post(
+        "/api/plan/meals", json={"week": week, "day": 4, "meal": "Snack"}
+    ).json()
+    snack = next(m for m in plan["meals"] if m["meal"] == "Snack")
+    plan = client.delete(f"/api/plan/meals/{snack['id']}").json()
+    assert not [m for m in plan["meals"] if m["meal"] == "Snack"]
 
     # manual prepared meal (frozen leftovers)
     plan = client.post("/api/plan/prepared", json={"name": "Frozen chili", "portions": 2}).json()
@@ -147,12 +174,14 @@ def test_plan_full_flow(client):
     assert pushed_list.status_code == 200
     assert len(pushed_list.json()) >= before
 
-    # cleanup: deleting the dinner meal removes its fills and returns the batch
-    plan = client.delete(f"/api/plan/meals/{dinner['id']}")
-    assert plan.status_code == 200
-    batch_after = next(p for p in plan.json()["prepared"] if p["id"] == batch["id"])
-    assert batch_after["placed"] == 0 and batch_after["available"] == base
-    client.delete(f"/api/plan/meals/{lunch['id']}")
+    # cleanup: with fixed slots the fills are deleted, not the meals
+    plan = client.get(f"/api/plan?week={week}").json()
+    for meal in plan["meals"]:
+        if meal["day"] == 2:
+            for fill in meal["fills"]:
+                plan = client.delete(f"/api/plan/fills/{fill['id']}").json()
+    batch_final = next(p for p in plan["prepared"] if p["id"] == batch["id"])
+    assert batch_final["placed"] == 0 and batch_final["available"] == base
 
 
 def test_plan_person_targeted_fills(client):
@@ -164,9 +193,9 @@ def test_plan_person_targeted_fills(client):
 
     # a meal with no persons yet
     plan = client.post(
-        "/api/plan/meals", json={"week": week, "day": 0, "meal": "Lunch"}
+        "/api/plan/meals", json={"week": week, "day": 0, "meal": "Brunch"}
     ).json()
-    meal = next(m for m in plan["meals"] if m["day"] == 0)
+    meal = next(m for m in plan["meals"] if m["day"] == 0 and m["meal"] == "Brunch")
     assert meal["persons"] == []
 
     # prepared batch with two portions: whole-field drop auto-attaches both
@@ -194,9 +223,9 @@ def test_plan_person_targeted_fills(client):
     # a second meal: dropping onto one person's half tags the fill and
     # attaches just that person
     plan = client.post(
-        "/api/plan/meals", json={"week": week, "day": 1, "meal": "Dinner"}
+        "/api/plan/meals", json={"week": week, "day": 1, "meal": "Late snack"}
     ).json()
-    dinner = next(m for m in plan["meals"] if m["day"] == 1)
+    dinner = next(m for m in plan["meals"] if m["day"] == 1 and m["meal"] == "Late snack")
     plan = client.post(
         f"/api/plan/meals/{dinner['id']}/fills",
         json={"prepared_id": goulash["id"], "person_id": first["id"]},

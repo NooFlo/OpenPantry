@@ -910,6 +910,8 @@ def remove_plan_meal(meal_id: str):
         return camelize(planning.remove_meal(meal_id))
     except LookupError:
         raise HTTPException(404, "meal not found")
+    except ValueError as e:
+        raise HTTPException(400, str(e))
 
 
 @app.post("/api/plan/meals/{meal_id}/fills")

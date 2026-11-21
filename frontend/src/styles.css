@@ -2067,8 +2067,10 @@ button.summary-card {
 
 .plan-board {
   display: grid;
-  grid-auto-flow: column;
-  grid-auto-columns: minmax(170px, 1fr);
+  /* 7 day columns; the rows are shared by every day via subgrid so the
+     head, Lunch and Dinner slots align across the whole week */
+  grid-template-columns: repeat(7, minmax(170px, 1fr));
+  grid-template-rows: auto auto auto 1fr;
   gap: 8px;
   overflow-x: auto;
   padding-bottom: 8px;
@@ -2076,13 +2078,20 @@ button.summary-card {
 }
 
 .plan-day {
+  grid-row: 1 / -1;
+  display: grid;
+  grid-template-rows: subgrid;
   border: 1px solid var(--border);
   border-radius: 12px;
   padding: 8px;
+  gap: 8px;
+  min-width: 0;
+}
+
+.plan-day-extras {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  min-height: 120px;
 }
 
 .plan-day-head {
@@ -2364,6 +2373,5 @@ button.summary-card {
 
   .plan-board {
     flex: 1;
-    grid-auto-columns: 1fr;
   }
 }

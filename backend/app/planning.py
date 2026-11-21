@@ -6,10 +6,40 @@ from .repo import new_id
 
 WEEK_DAYS = 7
 
+# fixed daily slots: every day of every week always carries these two,
+# spanning all persons in the system
+FIXED_MEALS = ("Lunch", "Dinner")
+
 
 def normalize_week(week_start: str) -> str:
     d = date.fromisoformat(week_start)
     return (d - timedelta(days=d.weekday())).isoformat()
+
+
+def _ensure_fixed_slots(db, week: str) -> None:
+    """Materialize the fixed Lunch/Dinner slots for every day of the week,
+    attaching every current person to each newly created slot."""
+    have = {
+        (row["day"], row["meal"])
+        for row in db.execute(
+            "SELECT day, meal FROM plan_meals WHERE week_start = ?", (week,)
+        )
+    }
+    person_ids = [row["id"] for row in db.execute("SELECT id FROM plan_persons ORDER BY name")]
+    for day in range(WEEK_DAYS):
+        for meal in FIXED_MEALS:
+            if (day, meal) in have:
+                continue
+            mid = new_id()
+            db.execute(
+                "INSERT INTO plan_meals (id, week_start, day, meal) VALUES (?, ?, ?, ?)",
+                (mid, week, day, meal),
+            )
+            for pid in person_ids:
+                db.execute(
+                    "INSERT OR IGNORE INTO plan_meal_persons (meal_id, person_id) VALUES (?, ?)",
+                    (mid, pid),
+                )
 
 
 def _persons_for(db, meal_ids: list[str]) -> dict[str, list[dict]]:
@@ -93,11 +123,16 @@ def list_persons() -> list[dict]:
 def plan_payload(week_start: str) -> dict:
     week = normalize_week(week_start)
     with get_db() as db:
+        _ensure_fixed_slots(db, week)
+        # fixed slots first (Lunch, then Dinner), then extras — so the
+        # columns align across the week
         meals = [
             dict(row)
             for row in db.execute(
                 "SELECT * FROM plan_meals WHERE week_start = ?"
-                " ORDER BY day, rowid",
+                " ORDER BY day,"
+                " CASE meal WHEN 'Lunch' THEN 0 WHEN 'Dinner' THEN 1 ELSE 2 END,"
+                " rowid",
                 (week,),
             )
         ]
@@ -122,6 +157,15 @@ def add_person(name: str) -> dict:
     pid = new_id()
     with get_db() as db:
         db.execute("INSERT INTO plan_persons (id, name) VALUES (?, ?)", (pid, name))
+        # everyone eats at every planned meal until removed from one
+        meal_ids = [
+            row["id"] for row in db.execute("SELECT id FROM plan_meals").fetchall()
+        ]
+        for mid in meal_ids:
+            db.execute(
+                "INSERT OR IGNORE INTO plan_meal_persons (meal_id, person_id) VALUES (?, ?)",
+                (mid, pid),
+            )
     return plan_payload(_current_week())
 
 
@@ -150,12 +194,21 @@ def add_meal(week_start: str, day: int, meal: str, person_ids: list[str]) -> dic
         raise ValueError("meal must not be empty")
     if day < 0 or day >= WEEK_DAYS:
         raise ValueError("day must be 0-6 (Monday-Sunday)")
-    mid = new_id()
     with get_db() as db:
-        db.execute(
-            "INSERT INTO plan_meals (id, week_start, day, meal) VALUES (?, ?, ?, ?)",
-            (mid, week, day, meal),
-        )
+        if meal in FIXED_MEALS:
+            # fixed slots always exist — re-adding one reuses it
+            row = db.execute(
+                "SELECT id FROM plan_meals WHERE week_start = ? AND day = ? AND meal = ?",
+                (week, day, meal),
+            ).fetchone()
+        else:
+            row = None
+        mid = row["id"] if row else new_id()
+        if not row:
+            db.execute(
+                "INSERT INTO plan_meals (id, week_start, day, meal) VALUES (?, ?, ?, ?)",
+                (mid, week, day, meal),
+            )
         for person_id in person_ids:
             db.execute(
                 "INSERT OR IGNORE INTO plan_meal_persons (meal_id, person_id) VALUES (?, ?)",
@@ -193,11 +246,15 @@ def toggle_meal_person(meal_id: str, person_id: str) -> dict:
 
 def remove_meal(meal_id: str) -> dict:
     with get_db() as db:
-        week = _week_of_meal(db, meal_id)
-        if week:
-            db.execute("DELETE FROM plan_meals WHERE id = ?", (meal_id,))
-    if week is None:
-        raise LookupError("meal not found")
+        row = db.execute(
+            "SELECT week_start, meal FROM plan_meals WHERE id = ?", (meal_id,)
+        ).fetchone()
+        if row is None:
+            raise LookupError("meal not found")
+        if row["meal"] in FIXED_MEALS:
+            raise ValueError("fixed slots cannot be removed")
+        week = row["week_start"]
+        db.execute("DELETE FROM plan_meals WHERE id = ?", (meal_id,))
     return plan_payload(week)
 
 
