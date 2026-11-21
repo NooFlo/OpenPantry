@@ -5,7 +5,7 @@ import { IconCheck, IconGear, IconPlus } from "../components/Icons";
 import AppSettingsSheet from "../components/AppSettingsSheet";
 import ThemeToggle from "../components/ThemeToggle";
 import ShoppingListSheet from "../components/ShoppingListSheet";
-import { isBinary, isLow } from "../lib/tracking";
+import { isBinary, isLow, packageCount } from "../lib/tracking";
 
 interface HomeScreenProps {
   items: Item[];
@@ -91,7 +91,9 @@ export default function HomeScreen({
                       <div className="item-sub">
                         {isBinary(item)
                           ? "Not in stock"
-                          : `${Math.round(item.quantity)} / ${item.minQuantity} ${item.unit}`}
+                          : item.unit === "pcs"
+                            ? `${packageCount(item)} / ${item.minQuantity} ${item.unit}`
+                            : `${packageCount(item)}\u00d7${item.minQuantity > 0 ? ` / ${Math.max(1, Math.round(item.minQuantity / (item.packageSize || 1)))}\u00d7` : ""}`}
                       </div>
                       <StockBar item={item} />
                     </div>
@@ -119,7 +121,9 @@ export default function HomeScreen({
                       <div className="item-sub">
                         {isBinary(item)
                           ? "May have been used while cooking"
-                          : `est. ${item.quantity} ${item.unit} left after cooking`}
+                          : item.unit === "pcs"
+                            ? `est. ${packageCount(item)} ${item.unit} left after cooking`
+                            : `est. ${packageCount(item)}\u00d7 left after cooking`}
                       </div>
                     </div>
                     <div className="yn-row">

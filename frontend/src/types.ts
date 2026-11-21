@@ -14,6 +14,9 @@ export interface Item {
   barcode?: string;
   /** All product barcodes that hit this item; `barcode` is the primary. */
   barcodes?: string[];
+  /** Whole packages in stock (bottles, packs) — qty mode only, derived in
+   *  the backend. Piece items count pieces; exact ml/g stay in `quantity`. */
+  packageCount?: number | null;
   uncertain?: boolean;
   trackingMode: TrackingMode;
 }

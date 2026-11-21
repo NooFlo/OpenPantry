@@ -1000,3 +1000,38 @@ def test_edit_recipe_relinks_step_quantities(client):
     assert len(links) == 1
     span = updated["steps"][0][links[0]["start"]:links[0]["end"]]
     assert span.lower() == "mehl"
+
+
+def _mk(name, unit, quantity, package_size, tracking_mode="qty"):
+    item = repo.create_item(name=name, category="Pantry", unit=unit,
+                            package_size=package_size,
+                            tracking_mode=tracking_mode)
+    return repo.restock_item(item["id"], quantity)
+
+
+def test_package_count_whole_packages_for_volume_items(client):
+    """Zitronensaft: 1.5 l in 0.75 l bottles -> 2 packages, not 1.5 l."""
+    item = _mk("PackageCount Saft", "l", 1.5, 0.75)
+    assert repo.get_item(item["id"])["package_count"] == 2
+    # consuming less than half a package doesn't drop the count
+    item2 = repo.consume_item(item["id"], 0.2)
+    assert item2["quantity"] == 1.3  # exact amount kept internally
+    assert item2["package_count"] == 2
+    repo.delete_item(item["id"])
+
+
+def test_package_count_pieces_count_pieces_not_packages(client):
+    """pcs items count pieces; packageSize is the buy size, not the display."""
+    item = _mk("PackageCount Rollen", "pcs", 2, 10)
+    got = repo.get_item(item["id"])
+    assert got["quantity"] == 2
+    assert got["package_count"] == 2  # 2 rolls, not bundle-of-10 rounding
+    repo.delete_item(item["id"])
+
+
+def test_package_count_binary_items_do_not_count(client):
+    item = _mk("PackageCount Folie", "pcs", 1, 1, tracking_mode="binary")
+    got = repo.get_item(item["id"])
+    assert got["tracking_mode"] == "binary"
+    assert got["package_count"] is None
+    repo.delete_item(item["id"])

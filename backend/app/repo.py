@@ -40,14 +40,28 @@ def _barcodes_for(db, item_ids: list[str]) -> dict[str, list[str]]:
     return out
 
 
+def _derive_package_count(item: dict) -> int | None:
+    """Qty-mode stock as whole packages (bottles, packs) — the number the
+    user tracks, not the weight. Piece-tracked items count pieces directly;
+    binary items don't count. Exact physical amounts stay in `quantity` for
+    recipe deductions and the low-stock prognosis."""
+    if item["tracking_mode"] == "binary":
+        return None
+    if item["unit"] == "pcs":
+        return round(item["quantity"])
+    return round(item["quantity"] / (item["package_size"] or 1))
+
+
 def _attach_barcodes(items: list[dict]) -> list[dict]:
     """Every item gains `barcodes` (all of them) and `barcode` (the primary,
-    first-assigned one — kept for the single-label UI and API compatibility)."""
+    first-assigned one — kept for the single-label UI and API compatibility),
+    plus the derived whole-package `package_count`."""
     with get_db() as db:
         by_item = _barcodes_for(db, [i["id"] for i in items])
     for item in items:
         item["barcodes"] = by_item.get(item["id"], [])
         item["barcode"] = item["barcodes"][0] if item["barcodes"] else None
+        item["package_count"] = _derive_package_count(item)
     return items
 
 

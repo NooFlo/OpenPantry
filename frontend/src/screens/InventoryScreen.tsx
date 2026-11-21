@@ -9,7 +9,7 @@ import LabelsSheet from "../components/LabelsSheet";
 import NfcLinkBlock from "../components/NfcLinkBlock";
 import ReceiptsView from "./ReceiptsView";
 import { useMediaQuery } from "../lib/useMediaQuery";
-import { formatStock, isBinary, isLow, isInStock } from "../lib/tracking";
+import { formatStock, isBinary, isLow, isInStock, stepAmount } from "../lib/tracking";
 
 type View = "items" | "receipts";
 
@@ -101,13 +101,13 @@ export default function InventoryScreen({ items, receipts, onConsume, onRestock,
                 <button
                   aria-label={`Use one ${item.name}`}
                   disabled={item.quantity <= 0}
-                  onClick={() => onConsume(item.id, 1)}
+                  onClick={() => onConsume(item.id, stepAmount(item))}
                 >
                   <IconMinus size={16} />
                 </button>
                 <button
                   aria-label={`Add one ${item.name}`}
-                  onClick={() => onRestock(item.id, 1)}
+                  onClick={() => onRestock(item.id, stepAmount(item))}
                 >
                   <IconPlus size={16} />
                 </button>
@@ -150,13 +150,13 @@ export default function InventoryScreen({ items, receipts, onConsume, onRestock,
         </div>
       ) : (
         <div className="qty-stepper">
-          <button onClick={() => onConsume(selectedLive.id, 1)} aria-label="Use one">
+          <button onClick={() => onConsume(selectedLive.id, stepAmount(selectedLive))} aria-label="Use one">
             <IconMinus size={18} />
           </button>
           <span className="value">
             {formatStock(selectedLive)}
           </span>
-          <button onClick={() => onRestock(selectedLive.id, 1)} aria-label="Add one">
+          <button onClick={() => onRestock(selectedLive.id, stepAmount(selectedLive))} aria-label="Add one">
             <IconPlus size={18} />
           </button>
         </div>
