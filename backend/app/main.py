@@ -284,12 +284,32 @@ CONTROL_CODES = labels.CONTROL_CODES
 
 @app.post("/api/scan/purchase")
 def scan_purchase(body: BarcodeRequest):
+    """BOUGHT-mode scan. Known barcodes restock a package. Unknown barcodes
+    auto-create the item from the Open Food Facts product (name, category,
+    package size) and stock it — zero-interaction unboxing. Products OFF
+    doesn't know stay unknown (404 + review popup for manual naming); an
+    identical OFF product name attaches the new EAN to the existing item."""
     item = repo.find_item_by_barcode(body.barcode)
     if not item:
-        _record_scan_event("unknown:bought", body.barcode)
-        raise HTTPException(404, "unknown barcode")
+        product = products.product_info(body.barcode)
+        if not product:
+            _record_scan_event("unknown:bought", body.barcode)
+            raise HTTPException(404, "unknown barcode")
+        existing = repo.find_item_by_name(product["name"])
+        if existing:
+            item = repo.add_item_barcode(existing["id"], body.barcode) or existing
+        else:
+            amount, unit = products.parse_quantity(product.get("quantity")) or (None, None)
+            item = repo.create_item(
+                name=product["name"],
+                category=products.guess_category(product.get("categories")),
+                unit=unit or "pcs",
+                package_size=amount or 1.0,
+                barcode=body.barcode,
+            )
     _push_to_ha()
-    return camelize(repo.restock_item(item["id"], item["package_size"] or 1))
+    restocked = repo.restock_item(item["id"], item["package_size"] or 1)
+    return camelize(restocked or item)
 
 
 @app.post("/api/scan/empty")

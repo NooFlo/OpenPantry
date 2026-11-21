@@ -321,3 +321,61 @@ def test_discard_pending_barcode(client):
     codes = {e["barcode"] for e in client.get("/api/barcode/pending").json()["barcodes"]}
     assert "4066600000003" not in codes
     assert client.delete("/api/barcode/pending/4066600000003").status_code == 404
+
+
+# --------------------------------------- BOUGHT-mode auto item creation
+
+
+MOCHA_PRODUCT = {
+    "status": 1,
+    "product": {
+        "product_name": "Mocha Testdrink",
+        "brands": "Testa",
+        "quantity": "500 ml",
+        "categories": ["beverages", "coffees", "mochas"],
+        "categories_tags": ["en:coffees"],
+        "image_small_url": None,
+    },
+}
+
+
+def test_bought_scan_auto_creates_stocked_item(client):
+    FakeOFF.responses["4066600000021"] = MOCHA_PRODUCT
+    response = client.post("/api/scan/purchase", json={"barcode": "4066600000021"})
+    assert response.status_code == 200
+    item = response.json()
+    assert item["name"] == "Mocha Testdrink"
+    assert item["unit"] == "l" and item["packageSize"] == 0.5
+    assert item["category"] == "Drinks"
+    assert item["barcodes"] == ["4066600000021"]
+    assert item["quantity"] == 0.5  # starts stocked: one scanned package
+    # a second package of the same product just counts up
+    second = client.post("/api/scan/purchase", json={"barcode": "4066600000021"})
+    assert second.status_code == 200
+    assert second.json()["quantity"] == 1.0
+
+
+def test_bought_scan_attaches_identical_off_names(client):
+    """Same OFF product under a second EAN (Aldi/REWE variants): attaches
+    the new barcode to the existing item instead of duplicating it."""
+    FakeOFF.responses["4066600000022"] = MOCHA_PRODUCT
+    response = client.post("/api/scan/purchase", json={"barcode": "4066600000022"})
+    assert response.status_code == 200
+    item = response.json()
+    assert item["name"] == "Mocha Testdrink"
+    assert set(item["barcodes"]) == {"4066600000021", "4066600000022"}
+    count = sum(1 for i in _items(client) if i["name"] == "Mocha Testdrink")
+    assert count == 1
+
+
+def test_bought_scan_offMiss_stays_unknown(client):
+    assert client.post("/api/scan/purchase", json={"barcode": MISS_EAN}).status_code == 404
+
+
+def test_guess_category():
+    assert products.guess_category(["beverages", "colas"]) == "Drinks"
+    assert products.guess_category(["dairy", "cheeses"]) == "Dairy"
+    assert products.guess_category(["meats", "sausages"]) == "Meat"
+    assert products.guess_category(["vegetables", "tomatoes"]) == "Produce"
+    assert products.guess_category(["salts", "condiments"]) == "Pantry"
+    assert products.guess_category(None) == "Pantry"

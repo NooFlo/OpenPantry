@@ -256,7 +256,7 @@ def consume_item(item_id: str, amount: float) -> dict | None:
         item = dict(db.execute("SELECT * FROM items WHERE id = ?", (item_id,)).fetchone())
         if _low_crossed(before_qty, after, item):
             _ensure_on_shopping_list(db, item)
-    return item
+    return _attach_barcodes([item])[0]
 
 
 def empty_item(item_id: str) -> dict | None:
@@ -288,7 +288,7 @@ def restock_item(item_id: str, amount: float) -> dict | None:
         )
         item = dict(db.execute("SELECT * FROM items WHERE id = ?", (item_id,)).fetchone())
         _remove_from_shopping_list_if_stocked(db, item)
-    return item
+    return _attach_barcodes([item])[0]
 
 
 def confirm_low(item_id: str, is_low: bool) -> dict | None:

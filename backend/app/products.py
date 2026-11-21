@@ -212,6 +212,33 @@ def suggest_items(product: dict, limit: int = 3) -> list[dict]:
     ]
 
 
+CATEGORY_HINTS = [
+    ("Drinks", ("beverages", "getränke", "waters", "juices", "säfte", "safte",
+                "sodas", "colas", "coffees", "kaffee", "teas", "beer", "bier",
+                "wine", "wein")),
+    ("Dairy", ("dairy", "milk", "milch", "cheese", "käse", "yogurt", "joghurt",
+               "butter", "butters", "eggs", "eier", "cream", "sahne")),
+    ("Meat", ("meat", "meats", "fleisch", "sausages", "wurst", "ham", "schinken",
+              "poultry", "geflügel", "chicken", "hähnchen")),
+    ("Produce", ("vegetables", "gemüse", "fruits", "obst", "produce", "tomatoes",
+                 "tomaten", "potatoes", "kartoffeln", "onions", "zwiebeln",
+                 "bananas", "bananen", "apples", "äpfel", "salads", "herbs",
+                 "kräuter", "mushrooms", "pilze")),
+    ("Household", ("household", "cleaning", "detergents", "spülmittel",
+                   "waschmittel", "toilet", "hygiene", "cosmetics", "kosmetik")),
+]
+
+
+def guess_category(categories: list | None) -> str:
+    """Best-effort Open Food Facts categories → OpenPantry category. Drinks
+    first so `beverages` wins over stray milk-ish tags; default Pantry."""
+    text = " ".join(categories or []).lower()
+    for category, words in CATEGORY_HINTS:
+        if any(word in text for word in words):
+            return category
+    return "Pantry"
+
+
 def parse_quantity(quantity: str | None) -> tuple[float, str] | None:
     """'500 g' → (0.5, 'kg'), '1,5 l' → (1.5, 'l'), '2 Stück' → (2, 'pcs').
 
