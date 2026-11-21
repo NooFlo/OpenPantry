@@ -279,17 +279,36 @@ def print_control_codes():
         import barcode as barcode_lib
         from barcode.writer import SVGWriter
 
-        cards = []
+        import qrcode
+        from qrcode.image.svg import SvgPathImage
+
+        def qr_svg(content):
+            buffer = io.BytesIO()
+            qrcode.make(content, image_factory=SvgPathImage, box_size=8).save(buffer)
+            svg = buffer.getvalue().decode()
+            return svg.replace("<svg", '<svg style="background:#fff"', 1)
+
+        ean_cards = []
+        qr_cards = []
         for action, meta in CONTROL_CODES.items():
             svg = barcode_lib.EAN13(meta["code"], writer=SVGWriter()).render()
-            cards.append(
+            hint = f"{meta['code']} — {meta['hint']}"
+            ean_cards.append(
                 f"<div class='card'><h2>{meta['label']}</h2>{svg.decode()}"
-                f"<p class='digits'>{meta['code']}</p><p class='hint'>{meta['hint']}</p></div>"
+                f"<p class='digits'>{meta['code']}</p><p class='hint'>{hint}</p></div>"
             )
-        cards = "\n".join(cards)
+            qr_cards.append(
+                f"<div class='card'><h2>{meta['label']}</h2>{qr_svg(meta['code'])}"
+                f"<p class='digits'>{meta['code']}</p><p class='hint'>{hint}</p></div>"
+            )
+        body = (
+            "<div class='cards'>" + "\n".join(ean_cards) + "</div>"
+            "<h3>QR versions (for 2D-only scanners)</h3>"
+            "<div class='cards'>" + "\n".join(qr_cards) + "</div>"
+        )
         err = ""
     except Exception as e:  # noqa: BLE001
-        cards, err = "", f"<p>Rendering failed: {e}</p>"
+        body, err = "", f"<p>Rendering failed: {e}</p>"
     return f"""<!doctype html>
 <html><head><meta charset="utf-8"><title>OpenPantry control codes</title>
 <style>
@@ -305,7 +324,9 @@ ol {{ font-size: 14px; line-height: 1.5; }}
 @media print {{ body {{ margin: 0; }} }}
 </style></head><body>
 <h1>OpenPantry scanner control codes</h1>
-<div class="cards">{cards}</div>
+<p class="hint">EAN barcodes below, QR versions further down. Both encode the same
+digits — print whichever your scanner reads and keep it next to the scanner.</p>
+{body}
 {err}
 <h3>How to use</h3>
 <ol>
@@ -813,12 +834,29 @@ def item_labels_lemd(request: Request, ids: str, tape: int = 24):
 
 
 @app.get("/api/labels/control-codes.lemd")
-def control_codes_lemd(request: Request, tape: int = 24):
-    """Epson strip with the three scanner control-code stickers."""
-    images = [img for img, _, _ in labels.control_code_labels(tape)]
+def control_codes_lemd(request: Request, tape: int = 24, format: str = "ean"):
+    """Epson strip with the three scanner control-code stickers; format=qr
+    renders QR codes of the same digits (2D-only scanners)."""
+    images = [img for img, _, _ in labels.control_code_labels(tape, qr=format == "qr")]
     if not images:
         raise HTTPException(500, "control codes could not be rendered")
     return _lemd_response(labels.generate_lemd(images, tape), "openpantry-control-codes.lemd")
+
+
+class ItemScanRequest(BaseModel):
+    item_id: str
+
+
+@app.post("/api/scan/item")
+def scan_item(body: ItemScanRequest):
+    """Item-label QR scanned by the USB wedge: it types the label URL
+    (/c/<item>), the bridge extracts the item and consumes one package —
+    the same action as the landing page's button."""
+    item = repo.get_item(body.item_id)
+    if not item:
+        raise HTTPException(404, "item not found")
+    _push_to_ha()
+    return camelize(repo.consume_item(item["id"], item["package_size"]))
 
 
 def _lemd_response(payload: str, filename: str) -> Response:

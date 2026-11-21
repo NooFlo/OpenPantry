@@ -17,6 +17,22 @@ const CONTROL_CODES = [
   { label: "CONSUME", code: "2000000000022", hint: "Back to the default: one package used up" },
 ];
 
+function Toggle({ value, options, onChange }: {
+  value: string; options: { id: string; label: string }[];
+  onChange: (id: string) => void;
+}) {
+  return (
+    <div className="segmented" role="group">
+      {options.map((option) => (
+        <button key={option.id} className={value === option.id ? "active" : ""}
+                onClick={() => onChange(option.id)}>
+          {option.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 function TapeSelect({ tape, onChange }: { tape: 12 | 24; onChange: (tape: 12 | 24) => void }) {
   return (
     <div className="segmented" role="group" aria-label="Tape width">
@@ -37,6 +53,7 @@ function download(url: string) {
  *  .lemd strips for the Epson Label Editor mobile app, like LabelGenerator. */
 export default function LabelsSheet({ items, selected, onClose }: LabelsSheetProps) {
   const [tape, setTape] = useState<12 | 24>(24);
+  const [stickerFormat, setStickerFormat] = useState<"ean" | "qr">("ean");
   const [picked, setPicked] = useState<Set<string>>(new Set());
 
   const sorted = useMemo(() => [...items].sort((a, b) => a.name.localeCompare(b.name)), [items]);
@@ -69,6 +86,13 @@ export default function LabelsSheet({ items, selected, onClose }: LabelsSheetPro
       <h3 className="sheet-title" style={{ fontSize: 16 }}>Tape width</h3>
       <TapeSelect tape={tape} onChange={setTape} />
 
+      <h3 className="sheet-title" style={{ fontSize: 16 }}>Control-sticker type</h3>
+      <Toggle
+        value={stickerFormat}
+        options={[{ id: "ean", label: "EAN (1D scanner)" }, { id: "qr", label: "QR (2D scanner)" }]}
+        onChange={(id) => setStickerFormat(id as "ean" | "qr")}
+      />
+
       <h3 className="sheet-title" style={{ fontSize: 16 }}>Scanner control codes</h3>
       {CONTROL_CODES.map((mode) => (
         <div key={mode.code} className="sheet-sub" style={{ display: "flex", gap: 8 }}>
@@ -84,7 +108,7 @@ export default function LabelsSheet({ items, selected, onClose }: LabelsSheetPro
         <button className="btn btn-ghost" onClick={() => window.open("/print/control-codes", "_blank")}>
           Print sheet (A4)
         </button>
-        <button className="btn btn-primary" onClick={() => download(`/api/labels/control-codes.lemd?tape=${tape}`)}>
+        <button className="btn btn-primary" onClick={() => download(`/api/labels/control-codes.lemd?tape=${tape}&format=${stickerFormat}`)}>
           Epson strip (.lemd)
         </button>
       </div>

@@ -236,7 +236,7 @@ def test_control_codes_page_renders_svgs(client):
     assert response.status_code == 200
     body = response.text
     assert "BOUGHT" in body and "EMPTY / TRASH" in body and "CONSUME" in body
-    assert body.count("<svg") == 3
+    assert body.count("<svg") == 6  # EAN + QR variants
     for meta in CONTROL_CODES.values():
         assert meta["code"] in body
 

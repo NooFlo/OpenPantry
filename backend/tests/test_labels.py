@@ -155,3 +155,26 @@ def test_control_codes_still_importable(client):
 
     assert CONTROL_CODES is labels.CONTROL_CODES
     assert CONTROL_CODES["bought"]["code"] == "2000000000008"
+
+
+def test_control_code_labels_qr_variant():
+    assert len(labels.control_code_labels(24, qr=False)) == 3
+    assert len(labels.control_code_labels(24, qr=True)) == 3
+    assert len(labels.control_code_labels(12, qr=True)) == 3
+
+
+def test_scan_item_endpoint(client):
+    """Item-label QR typed by the wedge (…/c/<id>) consumes one package."""
+    probe = client.post(
+        "/api/barcode/assign",
+        json={"barcode": "4012345678902", "item_name": "Scanprobe"}).json()
+    assert client.post("/api/scan/purchase",
+                       json={"barcode": "4012345678902"}).status_code == 200
+    before = _item(client, "Scanprobe")["quantity"]
+    response = client.post("/api/scan/item", json={"item_id": probe["id"]})
+    assert response.status_code == 200
+    consumed = response.json()
+    assert consumed["name"] == "Scanprobe"
+    assert consumed["quantity"] < before
+    assert client.post("/api/scan/item", json={"item_id": "missing"}).status_code == 404
+    client.delete(f"/api/items/{probe['id']}")

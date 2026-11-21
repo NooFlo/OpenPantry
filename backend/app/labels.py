@@ -138,17 +138,23 @@ def item_label(item: dict, base_url: str, tape_mm: int = 24) -> Image.Image:
     return _paste_row(_new_canvas(height, width), blocks, gap)
 
 
-def control_code_labels(tape_mm: int = 24) -> list[tuple[Image.Image, str, str]]:
-    """One label per scanner control code: caption + EAN-13 graphic."""
+def control_code_labels(tape_mm: int = 24, qr: bool = False) -> list[tuple[Image.Image, str, str]]:
+    """One label per scanner control code: caption + barcode graphic.
+    `qr=True` renders a QR of the code's digits — for scanners that only read
+    2D (the wedge then types the same digits + Enter, so the bridge logic is
+    identical)."""
     tape = tape_mm if tape_mm in TAPE_GEOMETRY else 24
     height = int(TAPE_GEOMETRY[tape]["printable"] * PX_PER_MM)
     labels = []
     for meta in CONTROL_CODES.values():
         caption = _text_image(meta["label"], int(height * 0.42))
-        code_img, rendered = _ean_image(meta["code"], height)
-        if not rendered:
-            continue
-        code_img.thumbnail((height * 20, int(height * 0.95)), Image.LANCZOS)
+        if qr:
+            code_img = _qr_image(meta["code"], int(height * 0.95))
+        else:
+            code_img, rendered = _ean_image(meta["code"], height)
+            if not rendered:
+                continue
+            code_img.thumbnail((height * 20, int(height * 0.95)), Image.LANCZOS)
         canvas = _new_canvas(height, caption.width + code_img.width + 3 * PX_PER_MM)
         _paste_row(canvas, [caption, code_img], PX_PER_MM)
         labels.append((canvas, meta["label"], meta["code"]))
