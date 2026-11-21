@@ -270,6 +270,7 @@ def scan_barcode(body: BarcodeRequest):
     if not item:
         _record_scan_event("unknown:consume", body.barcode)
         raise HTTPException(404, "unknown barcode")
+    _record_scan_event("consume", body.barcode)  # live UI refresh ping
     _push_to_ha()
     return camelize(repo.consume_item(item["id"], item["package_size"]))
 
@@ -306,7 +307,9 @@ def scan_purchase(body: BarcodeRequest):
                 unit=unit or "pcs",
                 package_size=amount or 1.0,
                 barcode=body.barcode,
+                tracking_mode="qty",  # count packages: each scan adds +1
             )
+    _record_scan_event("bought", body.barcode)  # live UI refresh ping
     _push_to_ha()
     restocked = repo.restock_item(item["id"], item["package_size"] or 1)
     return camelize(restocked or item)
@@ -319,6 +322,7 @@ def scan_empty(body: BarcodeRequest):
         _record_scan_event("unknown:empty", body.barcode)
         raise HTTPException(404, "unknown barcode")
     item = repo.empty_item(item["id"])
+    _record_scan_event("empty", body.barcode)  # live UI refresh ping
     _push_to_ha()
     return camelize(item)
 

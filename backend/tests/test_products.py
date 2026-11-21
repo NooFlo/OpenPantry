@@ -294,10 +294,13 @@ def test_remove_item_barcode(client):
 
 def test_scan_events_record_unknown_scans(client):
     baseline = client.get("/api/scan/events").json()["seq"]
-    # known scans record nothing
+    # known scans record a change ping (for the live UI refresh), never
+    # an unknown:* one — those alone drive the review popup
     kaffee = next(i for i in _items(client) if i["name"] == "Kaffee")
     client.post("/api/scan/barcode", json={"barcode": kaffee["barcode"]})
-    assert client.get(f"/api/scan/events?since={baseline}").json()["events"] == []
+    events = client.get(f"/api/scan/events?since={baseline}").json()["events"]
+    assert [e["kind"] for e in events] == ["consume"]
+    assert all(not e["kind"].startswith("unknown") for e in events)
 
     # an unknown scan is visible to popup pollers
     assert client.post("/api/scan/purchase",

@@ -1035,3 +1035,21 @@ def test_package_count_binary_items_do_not_count(client):
     assert got["tracking_mode"] == "binary"
     assert got["package_count"] is None
     repo.delete_item(item["id"])
+
+
+def test_scan_purchase_creates_qty_item(client, monkeypatch):
+    """Scanned purchases count packages (3 scans -> 3x), never bare binary."""
+    from app import products
+    monkeypatch.setattr(products, "product_info",
+                        lambda b: {"name": f"Scanfix Saft {b}", "quantity": "0,75 l",
+                                   "categories": ["en:beverages"]})
+    r1 = client.post("/api/scan/purchase", json={"barcode": "2098765000017"})
+    assert r1.status_code == 200, r1.text
+    item = r1.json()
+    assert item["trackingMode"] == "qty"
+    assert item["packageCount"] == 1
+    for _ in range(2):
+        item = client.post("/api/scan/purchase", json={"barcode": "2098765000017"}).json()
+    assert item["quantity"] == 2.25  # 3 packages of 0.75 l, exact on record
+    assert item["packageCount"] == 3
+    client.delete(f"/api/items/{item['id']}")

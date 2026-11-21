@@ -93,6 +93,10 @@ export default function App() {
         .then((body) => {
           if (body.seq === lastScanSeq.current) return;
           lastScanSeq.current = body.seq;
+          // any scan restocked, created or emptied an item — pull the
+          // fresh inventory and list without waiting for a page reload
+          fetchItems().then(setItems).catch(() => { /* backend briefly away */ });
+          fetchShoppingList().then(setShoppingList).catch(() => { /* ignore */ });
           return fetchPendingBarcodes().then((entries) => {
             setPending(entries);
             if (entries.length > 0) setReviewOpen(true);
