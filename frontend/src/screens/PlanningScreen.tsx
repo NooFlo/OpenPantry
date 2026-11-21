@@ -235,7 +235,6 @@ export default function PlanningScreen({ recipes, theme, onToggleTheme }: Planni
                   meal={lunch}
                   planPersons={plan?.persons ?? []}
                   onPlace={(drag, personId) => doPlace(drag, lunch, personId)}
-                  onTogglePerson={(personId) => togglePlanMealPerson(lunch.id, personId).then(setPlan)}
                   onDelete={() => deletePlanMeal(lunch.id).then(setPlan)}
                   onRemoveFill={(fill) => deletePlanFill(fill.id).then(setPlan)}
                   onChangePersons={() => {
@@ -250,7 +249,6 @@ export default function PlanningScreen({ recipes, theme, onToggleTheme }: Planni
                   meal={dinner}
                   planPersons={plan?.persons ?? []}
                   onPlace={(drag, personId) => doPlace(drag, dinner, personId)}
-                  onTogglePerson={(personId) => togglePlanMealPerson(dinner.id, personId).then(setPlan)}
                   onDelete={() => deletePlanMeal(dinner.id).then(setPlan)}
                   onRemoveFill={(fill) => deletePlanFill(fill.id).then(setPlan)}
                   onChangePersons={() => {
@@ -267,7 +265,6 @@ export default function PlanningScreen({ recipes, theme, onToggleTheme }: Planni
                       meal={meal}
                       planPersons={plan?.persons ?? []}
                       onPlace={(drag, personId) => doPlace(drag, meal, personId)}
-                      onTogglePerson={(personId) => togglePlanMealPerson(meal.id, personId).then(setPlan)}
                       onDelete={() => deletePlanMeal(meal.id).then(setPlan)}
                       onRemoveFill={(fill) => deletePlanFill(fill.id).then(setPlan)}
                       onChangePersons={() => {
@@ -351,7 +348,6 @@ interface MealCardProps {
   meal: PlanningMeal;
   planPersons: PlanPerson[];
   onPlace: (drag: DragPayload, personId: string | null) => void;
-  onTogglePerson: (personId: string) => void;
   onChangePersons: () => void;
   onDelete: () => void;
   onRemoveFill: (fill: PlanningFill) => void;
@@ -375,7 +371,6 @@ function MealCard({
   meal,
   planPersons,
   onPlace,
-  onTogglePerson,
   onChangePersons,
   onDelete,
   onRemoveFill,
@@ -385,6 +380,7 @@ function MealCard({
   const [hover, setHover] = useState<string | null>(null);
   const halves = planPersons.length >= 2 ? planPersons : [];
   const shared = meal.fills.filter((f) => !f.personId);
+  const tagged = meal.fills.filter((f) => f.personId);
 
   const drop = (e: DragEvent, personId: string | null) => {
     e.preventDefault();
@@ -417,58 +413,72 @@ function MealCard({
           )}
         </div>
       </div>
-      <div className="plan-meal-persons">
-        {meal.persons.map((p) => (
-          <button key={p.id} className="chip" onClick={() => onTogglePerson(p.id)} title="Tap to remove from this meal">
-            {p.name}
-          </button>
-        ))}
-        <button className="chip chip-add" onClick={onChangePersons}>
-          +
-        </button>
-      </div>
-      {halves.length >= 2 ? (
+      {halves.length >= 2 && hover !== null ? (
+        // during a drag the field splits into targeting zones: one strip for
+        // everyone plus a half per person
         <>
-          <div className="plan-halves">
-            {halves.map((p) => {
-              const fills = meal.fills.filter((f) => f.personId === p.id);
-              return (
-                <div
-                  key={p.id}
-                  className={hover === p.id ? "plan-half over" : "plan-half"}
-                  onDragOver={(e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    setHover(p.id);
-                  }}
-                  onDragLeave={(e) => {
-                    e.stopPropagation();
-                    setHover((h) => (h === p.id ? null : h));
-                  }}
-                  onDrop={(e) => drop(e, p.id)}
-                >
-                  <span className="plan-half-name">{p.name}</span>
-                  {fills.map((fill) => (
-                    <FillRow key={fill.id} fill={fill} onRemoveFill={onRemoveFill} />
-                  ))}
-                  {fills.length === 0 && meal.fills.length === 0 && (
-                    <div className="plan-half-empty">Drop here</div>
-                  )}
-                </div>
-              );
-            })}
+          <div
+            className={hover === "card" ? "plan-drop-all over" : "plan-drop-all"}
+            onDragOver={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              setHover("card");
+            }}
+            onDragLeave={(e) => {
+              e.stopPropagation();
+              setHover((h) => (h === "card" ? null : h));
+            }}
+            onDrop={(e) => drop(e, null)}
+          >
+            Everyone
           </div>
-          {shared.length === 0 && meal.fills.length === 0 && (
-            <div className="plan-meal-empty">Drop for everyone</div>
-          )}
+          <div className="plan-halves">
+            {halves.map((p) => (
+              <div
+                key={p.id}
+                className={hover === p.id ? "plan-half over" : "plan-half"}
+                onDragOver={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  setHover(p.id);
+                }}
+                onDragLeave={(e) => {
+                  e.stopPropagation();
+                  setHover((h) => (h === p.id ? null : h));
+                }}
+                onDrop={(e) => drop(e, p.id)}
+              >
+                <span className="plan-half-name">{p.name}</span>
+              </div>
+            ))}
+          </div>
+        </>
+      ) : (
+        <>
+          {/* one joint field per meal: a drop for everyone is a single
+              full-width entry */}
           {shared.map((fill) => (
             <FillRow key={fill.id} fill={fill} onRemoveFill={onRemoveFill} />
           ))}
+          {tagged.length > 0 && (
+            <div className="plan-halves">
+              {halves.map((p) => {
+                const fills = tagged.filter((f) => f.personId === p.id);
+                return fills.length > 0 ? (
+                  <div key={p.id} className="plan-half">
+                    <span className="plan-half-name">{p.name}</span>
+                    {fills.map((fill) => (
+                      <FillRow key={fill.id} fill={fill} onRemoveFill={onRemoveFill} />
+                    ))}
+                  </div>
+                ) : null;
+              })}
+            </div>
+          )}
+          {meal.fills.length === 0 && (
+            <div className="plan-meal-empty">Drop a recipe or prepared meal here</div>
+          )}
         </>
-      ) : meal.fills.length === 0 ? (
-        <div className="plan-meal-empty">Drop a recipe or prepared meal here</div>
-      ) : (
-        meal.fills.map((fill) => <FillRow key={fill.id} fill={fill} onRemoveFill={onRemoveFill} />)
       )}
     </div>
   );
