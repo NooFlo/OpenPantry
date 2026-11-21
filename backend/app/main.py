@@ -79,6 +79,7 @@ class ItemUpdateRequest(BaseModel):
     buy_amount: float | None = None
     barcode: str | None = None
     name: str | None = None
+    category: str | None = None
 
 
 class ShoppingListRequest(BaseModel):
@@ -314,9 +315,15 @@ def scan_purchase(body: BarcodeRequest):
             item = repo.add_item_barcode(existing["id"], body.barcode) or existing
         else:
             amount, unit = products.parse_quantity(product.get("quantity")) or (None, None)
+            # the concept family is the better categorizer than OFF tags
+            category = None
+            concept = catalog.resolve_item_concept({"name": product["name"]})
+            if concept:
+                category = catalog.FAMILY_DEFAULT_CATEGORY.get(
+                    catalog.CONCEPTS[concept]["family"])
             item = repo.create_item(
                 name=product["name"],
-                category=products.guess_category(product.get("categories")),
+                category=category or products.guess_category(product.get("categories")),
                 unit=unit or "pcs",
                 package_size=amount or 1.0,
                 barcode=body.barcode,
@@ -520,10 +527,13 @@ def update_item(item_id: str, body: ItemUpdateRequest):
             new_barcode = cleaned
         else:
             new_barcode = None  # an empty barcode clears the mapping
+    if body.category is not None and not body.category.strip():
+        raise HTTPException(400, "category must not be empty")
     try:
         item = repo.update_item(item_id, body.min_quantity, body.package_size,
                                 body.tracking_mode, buy_amount=body.buy_amount,
-                                barcode=new_barcode, name=body.name)
+                                barcode=new_barcode, name=body.name,
+                                category=body.category)
     except ValueError as error:
         raise HTTPException(409, str(error))
     if not item:

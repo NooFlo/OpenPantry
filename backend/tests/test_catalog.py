@@ -125,6 +125,27 @@ def test_junk_equipment_and_noise():
     assert catalog.junk_class("Knoblauch") is None
 
 
+def test_item_containment_guard_and_families():
+    # "... mit Hackfleisch" is an ingredient list, not the food: a soup
+    # must never resolve to mince
+    assert catalog.resolve_item_concept(
+        {"name": "Erasco Käse-Lauch-Suppe mit Hackfleisch 4037300115000"}) is None
+    # short aliases need start-of-name: "Aubergine" in a spread name is not
+    # fresh aubergine
+    assert catalog.resolve_item_concept(
+        {"name": "Vegane Bio-Streichcreme - Aubergine"}) is None
+    # ...but branded suffixed oils still resolve
+    assert catalog.resolve_item_concept(
+        {"name": "Natives Olivenöl Bio"}) == "olive_oil"
+    # kitchen-shelf family defaults
+    assert catalog.FAMILY_DEFAULT_CATEGORY["spice"] == "Spices"
+    assert catalog.FAMILY_DEFAULT_CATEGORY["blend"] == "Spices"
+    assert catalog.FAMILY_DEFAULT_CATEGORY["flour"] == "Baking"
+    assert catalog.FAMILY_DEFAULT_CATEGORY["dairy"] == "Dairy"
+    assert catalog.FAMILY_DEFAULT_CATEGORY["aromatic"] == "Produce"
+    assert catalog.FAMILY_DEFAULT_CATEGORY["oil"] == "Pantry"
+
+
 def test_prepared_references():
     assert catalog.is_prepared_reference("cooked rice", "cooked rice")
     assert catalog.is_prepared_reference("150 g cooked rice", "cooked rice")

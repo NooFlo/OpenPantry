@@ -151,11 +151,13 @@ def create_item(name: str, category: str = "Pantry", unit: str = "pcs",
     }
     if not concept_id:
         concept_id = catalog.resolve_item_concept(item)
-        if concept_id and category == "Pantry":
-            # family-driven category default (spices stay Pantry, produce
-            # becomes Produce, ...) — only when the caller had no opinion
-            item["category"] = catalog.FAMILY_DEFAULT_CATEGORY.get(
-                catalog.CONCEPTS[concept_id]["family"], category)
+    if concept_id:
+        family = catalog.CONCEPTS[concept_id]["family"]
+        # family-driven category: a resolved concept is a stronger signal
+        # than any OFF/brand heuristic ("Kreuzkümmel" is Spices, even if the
+        # OFF category said Snacks). Callers with a real opinion pass a
+        # category explicitly after this.
+        item["category"] = catalog.FAMILY_DEFAULT_CATEGORY.get(family, category)
     item["concept_id"] = concept_id
     with get_db() as db:
         db.execute(
@@ -193,8 +195,14 @@ def update_item(item_id: str, min_quantity: float | None = None,
                 tracking_mode: str | None = None,
                 buy_amount: float | None = None,
                 barcode: object = _UNSET,
-                name: str | None = None) -> dict | None:
+                name: str | None = None,
+                category: str | None = None) -> dict | None:
     with get_db() as db:
+        if category is not None:
+            category = category.strip()
+            if not category:
+                raise ValueError("category must not be empty")
+            db.execute("UPDATE items SET category = ? WHERE id = ?", (category, item_id))
         if name is not None:
             name = name.strip()
             if not name:

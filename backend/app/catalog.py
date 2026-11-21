@@ -191,7 +191,8 @@ CONCEPTS: dict[str, dict] = {
     "peanut_oil": {"de": "Erdnussöl", "en": "peanut oil", "family": "oil",
         "aliases": ["peanut oil", "erdnussöl"]},
     "sesame_oil": {"de": "Sesamöl", "en": "sesame oil", "family": "oil",
-        "aliases": ["sesame oil", "toasted sesame oil", "sesamöl"]},
+        "aliases": ["sesame oil", "toasted sesame oil", "sesamöl",
+        "sesamöl geröstet", "geröstetes sesamöl"]},
     "chili_oil": {"de": "Chili-Öl", "en": "chili crisp",
         "family": "oil", "aliases": ["chili oil", "chilli oil", "chili crisp",
         "chilli crisp", "crispy chili oil"]},
@@ -267,7 +268,7 @@ CONCEPTS: dict[str, dict] = {
         "durum wheat flour"]},
     "oats": {"de": "Haferflocken", "en": "rolled oats", "family": "grain",
         "aliases": ["rolled oats", "porridge oats", "oats", "haferflocken",
-        "hafer"]},
+        "hafer", "hafer geschält", "bio hafer geschält"]},
     "cornflour": {"de": "Speisestärke", "en": "cornflour",
         "family": "starch", "aliases": ["cornflour", "cornstarch",
         "corn flour", "speisestärke", "maizena"]},
@@ -290,7 +291,8 @@ CONCEPTS: dict[str, dict] = {
     # --- pasta -------------------------------------------------------------------
     "pasta_short": {"de": "Kurze Nudeln (Penne & Co.)", "en": "penne",
         "family": "pasta", "aliases": ["penne", "penne rigate",
-        "penne rigate nº 41", "rigatoni", "maccheroni", "macaroni",
+        "penne rigate nº 41", "frischei-nudeln", "frischei nudeln",
+        "rigatoni", "maccheroni", "macaroni",
         "elbow pasta", "dried elbow pasta", "fusilli", "hörnchen",
         "hörnchen, nudeln", "kritharaki", "orecchiette", "casarecce"]},
     "pasta_long": {"de": "Spaghetti", "en": "spaghetti", "family": "pasta",
@@ -350,6 +352,15 @@ CONCEPTS: dict[str, dict] = {
         "corn cobs", "maiskolben"]},
     "kimchi": {"de": "Kimchi", "en": "kimchi", "family": "pantry_conserve",
         "aliases": ["kimchi", "kimchi, korean made"]},
+    "apple_sauce": {"de": "Apfelmus", "en": "apple sauce",
+        "family": "pantry_conserve",
+        "aliases": ["apple sauce", "applesauce", "apfelmus"]},
+    "pesto": {"de": "Pesto", "en": "pesto", "family": "pantry_conserve",
+        "aliases": ["pesto", "basil pesto", "pesto basilico"]},
+    "vinegar_fruit": {"de": "Fruchtessig", "en": "fruit vinegar",
+        "family": "vinegar", "aliases": ["fruit vinegar", "raspberry vinegar",
+        "himbeer & essig", "himbeeressig"],
+        "sibling_of": ["vinegar_apple", "vinegar_mild_white"]},
     "fried_onions": {"de": "Röstzwiebeln", "en": "fried onions",
         "family": "pantry_conserve", "aliases": ["fried onions",
         "röstzwiebeln", "crispy fried onions"]},
@@ -411,12 +422,13 @@ CONCEPTS: dict[str, dict] = {
         "aliases": ["miso", "miso paste", "white miso", "red miso"]},
     "mustard": {"de": "Senf", "en": "mustard", "family": "condiment",
         "aliases": ["mustard", "english mustard", "dijon mustard",
-        "senf"]},
+        "senf", "senf, mittelscharf", "mittelscharfer senf",
+        "senf mittelscharf"]},
     "worcester": {"de": "Worcestershiresauce",
         "en": "worcestershire sauce", "family": "condiment",
         "aliases": ["worcestershire sauce", "worcestershire"]},
     "hot_sauce": {"de": "Tabasco", "en": "hot sauce",
-        "family": "condiment", "aliases": ["hot sauce", "tabasco",
+        "family": "condiment", "aliases": ["hot sauce", "tabasco", "tabasco sauce",
         "sriracha", "sambal oelek", "harissa"]},
     "sweet_chili_sauce": {"de": "Sweet-Chili-Sauce",
         "en": "sweet chili sauce", "family": "condiment",
@@ -429,7 +441,8 @@ CONCEPTS: dict[str, dict] = {
     "nut_spread_choc": {"de": "Nuss-Nougat-Creme",
         "en": "chocolate nut spread", "family": "spread",
         "aliases": ["nudossi", "nudossi ohne palmöl", "haselkuss",
-        "chocolate nut spread"]},
+        "chocolate nut spread", "ovomaltine crunchy cream",
+        "ovomaltine crunchy"]},
     "tahini": {"de": "Tahin", "en": "tahini", "family": "spread",
         "aliases": ["tahini", "hulled tahini", "tahin", "tahin sesammus"]},
     "sesame_seeds": {"de": "Sesamsamen", "en": "sesame seeds",
@@ -619,15 +632,17 @@ BLENDS: dict[str, list[str]] = {
     "lemon_pepper_mix": ["black_pepper", "lemon_juice"],
 }
 
+# Kitchen-shelf categories: spices get their own chip; baking goods
+# (flours, starch, leavening) cluster; drinks stays drinkables only.
 FAMILY_DEFAULT_CATEGORY = {
-    "spice": "Pantry", "blend": "Pantry", "herb_dried": "Pantry",
+    "spice": "Spices", "blend": "Spices", "herb_dried": "Spices",
     "herb_fresh": "Produce", "oil": "Pantry", "vinegar": "Pantry",
-    "sugar": "Pantry", "flour": "Pantry", "grain": "Pantry",
-    "starch": "Pantry", "pasta": "Pantry", "tomato": "Pantry",
+    "sugar": "Pantry", "flour": "Baking", "grain": "Pantry",
+    "starch": "Baking", "pasta": "Pantry", "tomato": "Pantry",
     "legume": "Pantry", "produce": "Produce", "aromatic": "Produce",
     "dairy": "Dairy", "dairy_alt": "Pantry", "cheese": "Dairy",
     "egg": "Dairy", "broth": "Pantry", "condiment": "Pantry",
-    "pantry_conserve": "Pantry", "baking": "Pantry", "nut": "Pantry",
+    "pantry_conserve": "Pantry", "baking": "Baking", "nut": "Pantry",
     "seed": "Pantry", "spread": "Pantry", "frozen": "Pantry",
     "staple": "Pantry", "meat": "Meat",
 }
@@ -812,8 +827,10 @@ def resolve(name: str) -> tuple[str | None, str]:
 
 def resolve_item_concept(item) -> str | None:
     """Inventory item dict -> concept key via aliases (exact, then
-    containment against long aliases). Branded suffixed names
-    ("Bio Natives Olivenöl Extra") still resolve."""
+    guarded containment). Branded suffixed names ("Bio Natives Olivenöl
+    Extra", "Natives Olivenöl Bio") still resolve — but a mid-name hit
+    after "mit ..." never tags ("Erasco Käse-Lauch-Suppe mit Hackfleisch"
+    is a soup, not mince)."""
     name = _norm((item or {}).get("name") or "")
     if not name:
         return None
@@ -821,11 +838,18 @@ def resolve_item_concept(item) -> str | None:
         return ALIASES[name]
     best, best_key = 0.0, None
     for alias, key in _CONTAINMENT.items():
-        if alias in name:
-            score = len(alias) / len(name)
-            if score > best:
-                best, best_key = score, key
-    return best_key
+        pos = name.find(alias)
+        if pos < 0:
+            continue
+        at_start = pos == 0
+        if pos > 0 and name[max(0, pos - 4):pos].rstrip().endswith("mit"):
+            continue  # "suppe mit Hackfleisch" & friends: ingredient list, not the food
+        if not at_start and len(alias) < 12:
+            continue  # mid-name hits need a long, specific alias
+        score = len(alias) / len(name) * (1.2 if at_start else 1.0)
+        if score > best:
+            best, best_key = score, key
+    return best_key if best > 0.30 else None
 
 
 def stock_map(items) -> dict[str, list[dict]]:
