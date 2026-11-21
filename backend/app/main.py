@@ -889,8 +889,9 @@ def standardize_catalog():
                "dropped": [], "recipesTouched": 0}
     for item in repo.list_items():
         concept = catalog.resolve_item_concept(item)
+        # write unconditionally: stale tags from older runs clear too
+        repo.set_item_concept(item["id"], concept)
         if concept:
-            repo.set_item_concept(item["id"], concept)
             summary["itemsTagged"] += 1
         else:
             summary["itemsUnmatched"].append(item["name"])
