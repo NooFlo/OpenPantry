@@ -1,11 +1,12 @@
 import { useMemo, useState } from "react";
-import type { Item, ItemPatch, ModelList, Receipt, Settings, SettingsPatch } from "../types";
+import type { Item, ItemCreatePayload, ItemPatch, ModelList, Receipt, Settings, SettingsPatch } from "../types";
 import { IconBarcode, IconGear, IconInventory, IconMinus, IconPlus, IconReceipt, IconSearch } from "../components/Icons";
 import Sheet from "../components/Sheet";
 import AlarmSheet, { ItemSettings } from "../components/AlarmSheet";
 import ThemeToggle from "../components/ThemeToggle";
 import ModelSettingsSheet from "../components/ModelSettingsSheet";
 import LabelsSheet from "../components/LabelsSheet";
+import AddItemSheet from "../components/AddItemSheet";
 import NfcLinkBlock from "../components/NfcLinkBlock";
 import ReceiptsView from "./ReceiptsView";
 import { useMediaQuery } from "../lib/useMediaQuery";
@@ -29,6 +30,7 @@ interface InventoryScreenProps {
   onDelete: (id: string) => void;
   onMatchItem: (receiptId: string, itemId: string, productName: string) => void;
   onUpdateItem: (id: string, patch: ItemPatch) => void;
+  onAddItem: (payload: ItemCreatePayload) => Promise<void>;
   onAddItemBarcode: (id: string, barcode: string) => void;
   onRemoveItemBarcode: (id: string, barcode: string) => void;
   settings: Settings;
@@ -38,7 +40,7 @@ interface InventoryScreenProps {
   onToggleTheme: () => void;
 }
 
-export default function InventoryScreen({ items, receipts, onConsume, onRestock, onDelete, onMatchItem, onUpdateItem, onAddItemBarcode, onRemoveItemBarcode, settings, models, onSaveSettings, theme, onToggleTheme }: InventoryScreenProps) {
+export default function InventoryScreen({ items, receipts, onConsume, onRestock, onDelete, onMatchItem, onUpdateItem, onAddItem, onAddItemBarcode, onRemoveItemBarcode, settings, models, onSaveSettings, theme, onToggleTheme }: InventoryScreenProps) {
   const [query, setQuery] = useState("");
   const [category, setCategory] = useState<string | null>(null);
   const [selected, setSelected] = useState<Item | null>(null);
@@ -46,6 +48,7 @@ export default function InventoryScreen({ items, receipts, onConsume, onRestock,
   const [alarmsOpen, setAlarmsOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [labelsOpen, setLabelsOpen] = useState(false);
+  const [addItemOpen, setAddItemOpen] = useState(false);
   const [view, setView] = useState<View>("items");
   const twoPane = useMediaQuery("(min-width: 1180px)");
 
@@ -269,9 +272,14 @@ export default function InventoryScreen({ items, receipts, onConsume, onRestock,
             </button>
           )}
           {view === "items" && (
-            <button className="icon-btn" onClick={() => setLabelsOpen(true)} aria-label="Labels and barcodes">
-              <IconBarcode size={19} />
-            </button>
+            <>
+              <button className="icon-btn" onClick={() => setAddItemOpen(true)} aria-label="Add item manually" title="Add item">
+                <IconPlus size={19} />
+              </button>
+              <button className="icon-btn" onClick={() => setLabelsOpen(true)} aria-label="Labels and barcodes">
+                <IconBarcode size={19} />
+              </button>
+            </>
           )}
           <ThemeToggle theme={theme} onToggle={onToggleTheme} />
         </div>
@@ -322,6 +330,10 @@ export default function InventoryScreen({ items, receipts, onConsume, onRestock,
           onSave={onSaveSettings}
           onClose={() => setSettingsOpen(false)}
         />
+      )}
+
+      {addItemOpen && (
+        <AddItemSheet onAddItem={onAddItem} onClose={() => setAddItemOpen(false)} />
       )}
 
       {labelsOpen && (

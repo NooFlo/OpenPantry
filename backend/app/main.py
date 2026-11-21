@@ -80,6 +80,20 @@ class ItemUpdateRequest(BaseModel):
     barcode: str | None = None
     name: str | None = None
     category: str | None = None
+    concept_id: str | None = None
+
+
+class ItemCreateRequest(BaseModel):
+    name: str
+    category: str | None = None
+    unit: str | None = None
+    quantity: float | None = None
+    min_quantity: float | None = None
+    package_size: float | None = None
+    buy_amount: float | None = None
+    tracking_mode: str | None = None
+    barcode: str | None = None
+    concept_id: str | None = None
 
 
 class ShoppingListRequest(BaseModel):
@@ -505,6 +519,66 @@ def barcode_assign(body: BarcodeAssignRequest):
     return camelize(item)
 
 
+@app.post("/api/items")
+def create_item(body: ItemCreateRequest):
+    """Manual item creation with every attribute. The concept tag comes
+    from an explicit (validated) concept_id or is resolved from the name;
+    a user-picked category always wins over the family default. A
+    quantity > 1 switches to quantity tracking unless tracking_mode is
+    set explicitly."""
+    name = (body.name or "").strip()
+    if not name:
+        raise HTTPException(422, "name must not be empty")
+    if body.unit is not None and body.unit not in ("g", "kg", "ml", "l", "pcs"):
+        raise HTTPException(400, "unit must be one of g, kg, ml, l, pcs")
+    if body.tracking_mode is not None and body.tracking_mode not in ("binary", "qty"):
+        raise HTTPException(400, "tracking_mode must be 'binary' or 'qty'")
+    if repo.find_item_by_name(name):
+        raise HTTPException(409, "an item with that name already exists")
+    barcode = None
+    if body.barcode and body.barcode.strip():
+        barcode = re.sub(r"\D", "", body.barcode)
+        if not 6 <= len(barcode) <= 14:
+            raise HTTPException(400, "barcode must be 6-14 digits")
+        clash = repo.find_item_by_barcode(barcode)
+        if clash:
+            raise HTTPException(409, f"barcode already used by {clash['name']}")
+    concept = body.concept_id
+    if concept and concept not in catalog.CONCEPTS:
+        raise HTTPException(400, f"unknown concept {concept}")
+    if not concept:
+        concept = catalog.resolve_item_concept({"name": name})
+    quantity = max(0.0, body.quantity or 0.0)
+    tracking = body.tracking_mode
+    if tracking is None and quantity > 0:
+        tracking = "qty" if quantity > 1 else "binary"
+    if quantity == 0:
+        tracking = tracking or "binary"
+    if (body.min_quantity or 0) > 0 and tracking == "binary":
+        raise HTTPException(400, "binary items cannot carry an alarm threshold; use quantity tracking")
+    try:
+        item = repo.create_item(
+            name=name,
+            category=(body.category or "Pantry").strip() or "Pantry",
+            unit=body.unit or "pcs",
+            package_size=max(0.0001, body.package_size or 1.0),
+            barcode=barcode,
+            tracking_mode=tracking or "binary",
+            concept_id=concept,
+            category_explicit=body.category is not None,
+            quantity=quantity,
+        )
+    except ValueError as error:
+        raise HTTPException(409, str(error))
+    with repo.get_db() as db:
+        if body.min_quantity or body.buy_amount:
+            db.execute(
+                "UPDATE items SET min_quantity = COALESCE(?, min_quantity),"
+                " buy_amount = COALESCE(?, buy_amount) WHERE id = ?",
+                (body.min_quantity, body.buy_amount, item["id"]))
+    return camelize(repo.get_item(item["id"]))
+
+
 @app.post("/api/items/{item_id}/update")
 def update_item(item_id: str, body: ItemUpdateRequest):
     if body.min_quantity is not None and body.min_quantity < 0:
@@ -529,11 +603,17 @@ def update_item(item_id: str, body: ItemUpdateRequest):
             new_barcode = None  # an empty barcode clears the mapping
     if body.category is not None and not body.category.strip():
         raise HTTPException(400, "category must not be empty")
+    new_concept = repo._UNSET
+    if body.concept_id is not None:
+        cleaned = (body.concept_id or "").strip()
+        if cleaned and cleaned not in catalog.CONCEPTS:
+            raise HTTPException(400, f"unknown concept {cleaned}")
+        new_concept = cleaned or None
     try:
         item = repo.update_item(item_id, body.min_quantity, body.package_size,
                                 body.tracking_mode, buy_amount=body.buy_amount,
                                 barcode=new_barcode, name=body.name,
-                                category=body.category)
+                                category=body.category, concept_id=new_concept)
     except ValueError as error:
         raise HTTPException(409, str(error))
     if not item:
@@ -868,6 +948,20 @@ def _push_to_ha():
     if not hass.enabled():
         return False
     return hass.sync(repo.list_shopping_list())
+
+
+@app.get("/api/catalog/resolve")
+def catalog_resolve(name: str):
+    """Alias -> concept, for the item-detail tag picker. Unknown input
+    resolves to {conceptId: null} instead of an error."""
+    concept, cleaned = catalog.resolve(name)
+    meta = catalog.CONCEPTS.get(concept)
+    return {
+        "conceptId": concept,
+        "label": meta["de"] if meta else None,
+        "family": meta["family"] if meta else None,
+        "cleaned": cleaned,
+    }
 
 
 @app.post("/api/catalog/standardize")

@@ -1,4 +1,4 @@
-import type { Item, ItemPatch, ModelList, PendingBarcode, PlanShoppingEntry, Receipt, Recipe, RecipeEditPatch, Settings, SettingsPatch, ShoppingListEntry, WeekPlan } from "./types";
+import type { Item, ItemCreatePayload, ItemPatch, ModelList, PendingBarcode, PlanShoppingEntry, Receipt, Recipe, RecipeEditPatch, Settings, SettingsPatch, ShoppingListEntry, WeekPlan } from "./types";
 
 const BASE = "/api";
 
@@ -49,6 +49,15 @@ export function confirmLow(itemId: string, isLow: boolean): Promise<Item> {
 
 export function updateItem(itemId: string, patch: ItemPatch): Promise<Item> {
   return request<Item>(`/items/${itemId}/update`, { method: "POST", body: JSON.stringify(patch) });
+}
+
+export function createItem(payload: ItemCreatePayload): Promise<Item> {
+  return request<Item>("/items", { method: "POST", body: JSON.stringify(payload) });
+}
+
+/** Alias -> concept for the tag picker ("cinnamon sticks" -> Zimtstangen). */
+export function resolveConcept(name: string): Promise<{ conceptId: string | null; label: string | null; family: string | null }> {
+  return request(`/catalog/resolve?name=${encodeURIComponent(name)}`);
 }
 
 export function addItemBarcode(itemId: string, barcode: string): Promise<Item> {

@@ -63,6 +63,10 @@ def _attach_barcodes(items: list[dict]) -> list[dict]:
         item["barcodes"] = by_item.get(item["id"], [])
         item["barcode"] = item["barcodes"][0] if item["barcodes"] else None
         item["package_count"] = _derive_package_count(item)
+        concept = item.get("concept_id")
+        if concept:
+            meta = catalog.CONCEPTS.get(concept)
+            item["concept_label"] = meta["de"] if meta else None
     return items
 
 
@@ -136,12 +140,13 @@ def set_item_barcode(item_id: str, barcode: str) -> dict | None:
 
 def create_item(name: str, category: str = "Pantry", unit: str = "pcs",
                 package_size: float = 1.0, barcode: str | None = None,
-                tracking_mode: str = "binary", concept_id: str | None = None) -> dict:
+                tracking_mode: str = "binary", concept_id: str | None = None,
+                category_explicit: bool = False, quantity: float = 0.0) -> dict:
     item = {
         "id": new_id(),
         "name": name,
         "category": category,
-        "quantity": 0,
+        "quantity": max(0.0, quantity),
         "unit": unit,
         "min_quantity": 0,
         "package_size": package_size,
@@ -155,9 +160,10 @@ def create_item(name: str, category: str = "Pantry", unit: str = "pcs",
         family = catalog.CONCEPTS[concept_id]["family"]
         # family-driven category: a resolved concept is a stronger signal
         # than any OFF/brand heuristic ("Kreuzkümmel" is Spices, even if the
-        # OFF category said Snacks). Callers with a real opinion pass a
-        # category explicitly after this.
-        item["category"] = catalog.FAMILY_DEFAULT_CATEGORY.get(family, category)
+        # OFF category said Snacks) — unless the user just picked a
+        # category themselves (manual item creation passes respect=True).
+        if not category_explicit:
+            item["category"] = catalog.FAMILY_DEFAULT_CATEGORY.get(family, category)
     item["concept_id"] = concept_id
     with get_db() as db:
         db.execute(
@@ -196,7 +202,8 @@ def update_item(item_id: str, min_quantity: float | None = None,
                 buy_amount: float | None = None,
                 barcode: object = _UNSET,
                 name: str | None = None,
-                category: str | None = None) -> dict | None:
+                category: str | None = None,
+                concept_id: object = _UNSET) -> dict | None:
     with get_db() as db:
         if category is not None:
             category = category.strip()
@@ -213,6 +220,10 @@ def update_item(item_id: str, min_quantity: float | None = None,
             if clash:
                 raise ValueError(f"name already used by {clash['name']}")
             db.execute("UPDATE items SET name = ? WHERE id = ?", (name, item_id))
+        if concept_id is not _UNSET:
+            # explicit clear ("" / None) or a validated catalog key
+            db.execute("UPDATE items SET concept_id = ? WHERE id = ?",
+                       (concept_id or None, item_id))
         if min_quantity is not None:
             db.execute("UPDATE items SET min_quantity = ? WHERE id = ?", (min_quantity, item_id))
         if buy_amount is not None:

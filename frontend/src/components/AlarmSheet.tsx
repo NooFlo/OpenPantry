@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
 import type { Item, ItemPatch } from "../types";
+import { CANONICAL_CATEGORIES } from "../types";
+import { resolveConcept } from "../api";
 import Sheet from "./Sheet";
 import StepperRow, { stepSize } from "./StepperRow";
 import { IconBarcode, IconPlus, IconX } from "./Icons";
@@ -24,8 +26,39 @@ export function ItemSettings({ item, onUpdate, onAddBarcode, onRemoveBarcode }: 
   const binary = isBinary(item);
 
   const [barcodeDraft, setBarcodeDraft] = useState("");
-  useEffect(() => setBarcodeDraft(""), [item.id]);
+  const [conceptDraft, setConceptDraft] = useState("");
+  const [conceptHint, setConceptHint] = useState<string | null>(null);
+  const [conceptBusy, setConceptBusy] = useState(false);
+  const [customCategory, setCustomCategory] = useState("");
+  useEffect(() => {
+    setBarcodeDraft("");
+    setConceptDraft("");
+    setConceptHint(null);
+    setCustomCategory("");
+  }, [item.id]);
   const barcodes = item.barcodes ?? (item.barcode ? [item.barcode] : []);
+  const hasCustomCategory = item.category && !CANONICAL_CATEGORIES.includes(item.category);
+
+  /** Look the typed alias up in the food catalog and tag the item. */
+  const tagConcept = async () => {
+    const query = conceptDraft.trim();
+    if (!query || conceptBusy) return;
+    setConceptBusy(true);
+    setConceptHint(null);
+    try {
+      const { conceptId } = await resolveConcept(query);
+      if (conceptId) {
+        onUpdate(item.id, { concept_id: conceptId });
+        setConceptDraft("");
+      } else {
+        setConceptHint(`No food tag found for “${query}”.`);
+      }
+    } catch {
+      setConceptHint("Could not reach the catalog.");
+    } finally {
+      setConceptBusy(false);
+    }
+  };
 
   const addBarcode = () => {
     const code = barcodeDraft.trim();
@@ -106,6 +139,103 @@ export function ItemSettings({ item, onUpdate, onAddBarcode, onRemoveBarcode }: 
           onStep={stepBuy}
         />
       )}
+
+      <div>
+        <p className="sheet-sub">Category</p>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 8 }}>
+          {CANONICAL_CATEGORIES.map((cat) => (
+            <button
+              key={cat}
+              className={`chip${item.category === cat ? " active" : ""}`}
+              onClick={() => onUpdate(item.id, { category: cat })}
+            >
+              {cat}
+            </button>
+          ))}
+          {hasCustomCategory && (
+            <button
+              className="chip active"
+              title="Reset to Pantry"
+              onClick={() => onUpdate(item.id, { category: "Pantry" })}
+            >
+              {item.category} ✕
+            </button>
+          )}
+        </div>
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <input
+            className="import-input"
+            style={{ marginBottom: 0 }}
+            placeholder="custom category…"
+            value={customCategory}
+            onChange={(e) => setCustomCategory(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && customCategory.trim()) {
+                onUpdate(item.id, { category: customCategory.trim() });
+                setCustomCategory("");
+              }
+            }}
+          />
+          <button
+            className="icon-btn"
+            aria-label="Set custom category"
+            disabled={!customCategory.trim()}
+            onClick={() => {
+              onUpdate(item.id, { category: customCategory.trim() });
+              setCustomCategory("");
+            }}
+          >
+            <IconPlus size={18} />
+          </button>
+        </div>
+      </div>
+
+      <div>
+        <p className="sheet-sub">
+          Food tag — which recipe ingredient this item is
+        </p>
+        {item.conceptId ? (
+          <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 8 }}>
+            <span className="tag-chip">{item.conceptLabel ?? item.conceptId}</span>
+            <button
+              className="icon-btn"
+              aria-label="Remove food tag"
+              title={"Cooking with this item counts as using up “" + (item.conceptLabel ?? item.conceptId) + "”"}
+              onClick={() => onUpdate(item.id, { concept_id: "" })}
+            >
+              <IconX size={16} />
+            </button>
+          </div>
+        ) : (
+          <p className="sheet-sub" style={{ marginBottom: 8 }}>
+            Not tagged yet — recipes can’t match this item by name alone.
+          </p>
+        )}
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <input
+            className="import-input"
+            style={{ marginBottom: 0 }}
+            placeholder="find a tag: “cinnamon sticks”, “Zimt”…"
+            value={conceptDraft}
+            disabled={conceptBusy}
+            onChange={(e) => setConceptDraft(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") tagConcept();
+            }}
+          />
+          <button
+            className="icon-btn"
+            aria-label="Tag item"
+            disabled={conceptBusy || !conceptDraft.trim()}
+            onClick={tagConcept}
+          >
+            <IconPlus size={18} />
+          </button>
+        </div>
+        {conceptHint && (
+          <p className="sheet-sub" style={{ marginTop: 6, marginBottom: 0 }}>{conceptHint}</p>
+        )}
+      </div>
 
       <div>
         <p className="sheet-sub">

@@ -352,6 +352,11 @@ CONCEPTS: dict[str, dict] = {
         "corn cobs", "maiskolben"]},
     "kimchi": {"de": "Kimchi", "en": "kimchi", "family": "pantry_conserve",
         "aliases": ["kimchi", "kimchi, korean made"]},
+    "coffee": {"de": "Kaffee", "en": "coffee", "family": "drinks",
+        "aliases": ["coffee", "coffee beans", "espresso", "espresso beans",
+        "whole coffee beans", "espresso ganze bohne", "kaffee",
+        "kaffeebohnen", "ganze kaffeebohnen", "instant coffee",
+        "kaffeepulver", "filterkaffee", "decaffeinated coffee"]},
     "apple_sauce": {"de": "Apfelmus", "en": "apple sauce",
         "family": "pantry_conserve",
         "aliases": ["apple sauce", "applesauce", "apfelmus"]},
@@ -644,7 +649,7 @@ FAMILY_DEFAULT_CATEGORY = {
     "egg": "Dairy", "broth": "Pantry", "condiment": "Pantry",
     "pantry_conserve": "Pantry", "baking": "Baking", "nut": "Pantry",
     "seed": "Pantry", "spread": "Pantry", "frozen": "Pantry",
-    "staple": "Pantry", "meat": "Meat",
+    "staple": "Pantry", "meat": "Meat", "drinks": "Drinks",
 }
 
 # Fuzzy fallback must never bridge these concept keys (lookalike traps).

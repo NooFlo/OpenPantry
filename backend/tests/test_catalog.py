@@ -241,6 +241,53 @@ def test_standardize_is_idempotent(client):
     assert not second["dropped"]
 
 
+# ------------------------------------------------- manual create/edit
+def test_manual_create_and_tag_editing(client):
+    # full-attribute manual creation: concept auto-resolves from the name,
+    # the user's category wins over the family default
+    response = client.post("/api/items", json={
+        "name": "Kreuzkümmel gemahlen", "category": "Spices", "unit": "g",
+        "quantity": 2.5,               # > 1 -> flips to qty tracking
+        "packageSize": 100, "buyAmount": 200, "minQuantity": 0.5,
+    })
+    assert response.status_code == 200, response.text
+    item = response.json()
+    assert item["conceptId"] == "cumin"
+    assert item["category"] == "Spices"      # explicit choice respected
+    assert item["trackingMode"] == "qty"
+    assert item["quantity"] > 0
+    # duplicate name rejected
+    response = client.post("/api/items", json={"name": "Kreuzkümmel gemahlen"})
+    assert response.status_code == 409
+    # unknown concept rejected
+    response = client.post("/api/items", json={"name": "Sonstwas", "concept_id": "nonsense"})
+    assert response.status_code == 400
+    # concept editing on the update endpoint: set, then clear
+    response = client.post(f"/api/items/{item['id']}/update",
+                           json={"concept_id": "turmeric"})
+    assert response.status_code == 200 and response.json()["conceptId"] == "turmeric"
+    assert response.json()["conceptLabel"] == "Kurkuma"
+    response = client.post(f"/api/items/{item['id']}/update",
+                           json={"concept_id": ""})
+    assert response.status_code == 200 and response.json()["conceptId"] is None
+
+
+def test_catalog_resolve_helper(client):
+    r = client.get("/api/catalog/resolve", params={"name": "cinnamon sticks"})
+    assert r.status_code == 200
+    assert r.json()["conceptId"] == "cinnamon_stick"
+    assert r.json()["label"] == "Zimtstangen"
+    r = client.get("/api/catalog/resolve", params={"name": "gibberisch zeug"})
+    assert r.status_code == 200 and r.json()["conceptId"] is None
+
+
+def test_manual_create_without_category_uses_family(client):
+    response = client.post("/api/items", json={"name": "Gochujang"})
+    assert response.status_code == 200
+    assert response.json()["category"] == "Pantry"   # condiment family default
+    client.delete(f"/api/items/{response.json()['id']}")
+
+
 # ------------------------------------------------- BOUGHT concept dedupe
 def test_bought_scan_reuses_concept_item(client, monkeypatch):
     from app import products

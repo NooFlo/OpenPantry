@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import type { Item, ItemPatch, ModelList, PendingBarcode, Recipe, RecipeEditPatch, Receipt, Settings, SettingsPatch, ShoppingListEntry, Tab } from "./types";
+import type { Item, ItemCreatePayload, ItemPatch, ModelList, PendingBarcode, Recipe, RecipeEditPatch, Receipt, Settings, SettingsPatch, ShoppingListEntry, Tab } from "./types";
 import {
   addMissingToShoppingList,
   addToShoppingList,
@@ -19,6 +19,7 @@ import {
   fetchSettings,
   fetchShoppingList,
   addItemBarcode,
+  createItem,
   matchRecipeIngredient,
   matchReceiptItem as matchReceiptItemApi,
   pushShoppingList,
@@ -192,6 +193,11 @@ export default function App() {
       .catch(console.error);
   };
 
+  const onAddItem = async (payload: ItemCreatePayload) => {
+    const created = await createItem(payload);
+    setItems((prev) => [...prev, created].sort((a, b) => a.name.localeCompare(b.name)));
+  };
+
   const changeItemThresholds = (id: string, patch: ItemPatch) => {
     setItems((prev) =>
       prev.map((i) =>
@@ -202,6 +208,15 @@ export default function App() {
               packageSize: patch.package_size ?? i.packageSize,
               buyAmount: patch.buy_amount ?? i.buyAmount,
               trackingMode: patch.tracking_mode ?? i.trackingMode,
+              name: patch.name ?? i.name,
+              category: patch.category ?? i.category,
+              conceptId: patch.concept_id !== undefined ? (patch.concept_id || null) : i.conceptId,
+              conceptLabel:
+                patch.concept_id !== undefined
+                  ? patch.concept_id
+                    ? i.conceptLabel
+                    : null
+                  : i.conceptLabel,
             }
           : i
       )
@@ -317,6 +332,7 @@ export default function App() {
             onDelete={removeItem}
             onMatchItem={matchReceiptItem}
             onUpdateItem={changeItemThresholds}
+            onAddItem={onAddItem}
             onAddItemBarcode={onAddItemBarcode}
             onRemoveItemBarcode={onRemoveItemBarcode}
             settings={settings}

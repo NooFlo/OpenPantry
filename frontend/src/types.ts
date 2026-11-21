@@ -20,9 +20,19 @@ export interface Item {
   /** Whole packages in stock (bottles, packs) — qty mode only, derived in
    *  the backend. Piece items count pieces; exact ml/g stay in `quantity`. */
   packageCount?: number | null;
+  /** Bilingual concept tag from the food catalog ("cumin", "cinnamon_stick").
+   *  Set by the matcher, editable by hand. */
+  conceptId?: string | null;
+  /** Display name of the concept ("Kreuzkümmel", "Zimtstangen"). */
+  conceptLabel?: string | null;
   uncertain?: boolean;
   trackingMode: TrackingMode;
 }
+
+/** The canonical categories — chips in the pickers, order matters. */
+export const CANONICAL_CATEGORIES: string[] = [
+  "Produce", "Dairy", "Meat", "Drinks", "Spices", "Baking", "Pantry", "Household",
+];
 
 export interface ItemPatch {
   min_quantity?: number;
@@ -30,6 +40,24 @@ export interface ItemPatch {
   buy_amount?: number;
   tracking_mode?: TrackingMode;
   barcode?: string;
+  name?: string;
+  category?: string;
+  /** catalog concept id; "" clears the tag */
+  concept_id?: string;
+}
+
+/** Manual item creation — everything optional except the name. */
+export interface ItemCreatePayload {
+  name: string;
+  category?: string;
+  unit?: Unit;
+  quantity?: number;
+  min_quantity?: number;
+  package_size?: number;
+  buy_amount?: number;
+  tracking_mode?: TrackingMode;
+  barcode?: string;
+  concept_id?: string;
 }
 
 export interface Ingredient {
