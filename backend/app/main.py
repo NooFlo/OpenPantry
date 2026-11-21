@@ -1,6 +1,8 @@
 import logging
 import io
 import re
+import threading
+from collections import deque
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -237,10 +239,36 @@ def remove_item_barcode(item_id: str, barcode: str):
     return camelize(item)
 
 
+# Ring buffer of recent scan events: the frontend polls it so a popup can open
+# the moment an unknown barcode is scanned, independent of any device state.
+_SCAN_EVENTS: deque = deque(maxlen=50)
+_SCAN_EVENT_SEQ = [0]
+_SCAN_EVENT_LOCK = threading.Lock()
+
+
+def _record_scan_event(kind: str, barcode: str) -> None:
+    with _SCAN_EVENT_LOCK:
+        _SCAN_EVENT_SEQ[0] += 1
+        _SCAN_EVENTS.append({
+            "seq": _SCAN_EVENT_SEQ[0],
+            "kind": kind,
+            "barcode": barcode,
+        })
+
+
+@app.get("/api/scan/events")
+def scan_events(since: int = 0):
+    with _SCAN_EVENT_LOCK:
+        events = [e for e in _SCAN_EVENTS if e["seq"] > since]
+        current = _SCAN_EVENT_SEQ[0]
+    return {"seq": current, "events": camelize(events)}
+
+
 @app.post("/api/scan/barcode")
 def scan_barcode(body: BarcodeRequest):
     item = repo.find_item_by_barcode(body.barcode)
     if not item:
+        _record_scan_event("unknown:consume", body.barcode)
         raise HTTPException(404, "unknown barcode")
     _push_to_ha()
     return camelize(repo.consume_item(item["id"], item["package_size"]))
@@ -258,6 +286,7 @@ CONTROL_CODES = labels.CONTROL_CODES
 def scan_purchase(body: BarcodeRequest):
     item = repo.find_item_by_barcode(body.barcode)
     if not item:
+        _record_scan_event("unknown:bought", body.barcode)
         raise HTTPException(404, "unknown barcode")
     _push_to_ha()
     return camelize(repo.restock_item(item["id"], item["package_size"] or 1))
@@ -267,6 +296,7 @@ def scan_purchase(body: BarcodeRequest):
 def scan_empty(body: BarcodeRequest):
     item = repo.find_item_by_barcode(body.barcode)
     if not item:
+        _record_scan_event("unknown:empty", body.barcode)
         raise HTTPException(404, "unknown barcode")
     item = repo.empty_item(item["id"])
     _push_to_ha()
@@ -368,6 +398,14 @@ def barcode_lookup(body: BarcodeRequest):
 @app.get("/api/barcode/pending")
 def barcode_pending():
     return {"barcodes": camelize(products.pending_barcodes())}
+
+
+@app.delete("/api/barcode/pending/{barcode}")
+def discard_pending_barcode(barcode: str):
+    """Remove a queue entry for good: unwanted scans vanish everywhere."""
+    if not products.discard_cached(barcode):
+        raise HTTPException(404, "barcode not in the review queue")
+    return {"discarded": barcode}
 
 
 @app.post("/api/barcode/assign")

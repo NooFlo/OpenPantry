@@ -8,15 +8,15 @@ interface ReviewSheetProps {
   /** Assign a pending barcode to an existing item (or a fresh name — the
    *  server derives package size/unit from the Open Food Facts product). */
   onAssign: (barcode: string, target: { itemId?: string; itemName?: string }) => Promise<void>;
-  /** Dismiss for this session: stays reviewable, but won't auto-open again. */
-  onDismiss: (barcode: string) => void;
+  /** Remove the queue entry for good (vanishes on every device). */
+  onRemove: (barcode: string) => void;
   onClose: () => void;
 }
 
-function EntryCard({ entry, onAssign, onDismiss }: {
+function EntryCard({ entry, onAssign, onRemove }: {
   entry: PendingBarcode;
   onAssign: ReviewSheetProps["onAssign"];
-  onDismiss: ReviewSheetProps["onDismiss"];
+  onRemove: ReviewSheetProps["onRemove"];
 }) {
   const [busy, setBusy] = useState(false);
   const [itemName, setItemName] = useState(entry.name);
@@ -52,7 +52,7 @@ function EntryCard({ entry, onAssign, onDismiss }: {
             {entry.barcode}{entry.quantity ? ` · ${entry.quantity}` : ""}
           </div>
         </div>
-        <button className="icon-btn" aria-label="Dismiss" onClick={() => onDismiss(entry.barcode)}>
+        <button className="icon-btn" title="Remove from the review queue" aria-label="Remove" onClick={() => onRemove(entry.barcode)}>
           ✕
         </button>
       </div>
@@ -101,7 +101,7 @@ function EntryCard({ entry, onAssign, onDismiss }: {
 
 /** Live review popup for scanned barcodes without an inventory mapping:
  *  Open Food Facts data and generic-catalog suggestions, confirmed in place. */
-export default function ReviewSheet({ entries, onAssign, onDismiss, onClose }: ReviewSheetProps) {
+export default function ReviewSheet({ entries, onAssign, onRemove, onClose }: ReviewSheetProps) {
   return (
     <Sheet onClose={onClose}>
       <h2 className="sheet-title"><IconBarcode size={18} /> Scanned without a mapping</h2>
@@ -111,7 +111,7 @@ export default function ReviewSheet({ entries, onAssign, onDismiss, onClose }: R
         from then on.
       </p>
       {entries.map((entry) => (
-        <EntryCard key={entry.barcode} entry={entry} onAssign={onAssign} onDismiss={onDismiss} />
+        <EntryCard key={entry.barcode} entry={entry} onAssign={onAssign} onRemove={onRemove} />
       ))}
       <div className="sheet-actions">
         <button className="btn btn-ghost" onClick={onClose}>

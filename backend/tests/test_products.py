@@ -287,3 +287,37 @@ def test_remove_item_barcode(client):
     assert body["status"] == "known"
     assert client.delete(
         f"/api/items/{salz['id']}/barcodes/0000000000000").status_code == 404
+
+
+# ------------------------------------------------- scan events + discard
+
+
+def test_scan_events_record_unknown_scans(client):
+    baseline = client.get("/api/scan/events").json()["seq"]
+    # known scans record nothing
+    kaffee = next(i for i in _items(client) if i["name"] == "Kaffee")
+    client.post("/api/scan/barcode", json={"barcode": kaffee["barcode"]})
+    assert client.get(f"/api/scan/events?since={baseline}").json()["events"] == []
+
+    # an unknown scan is visible to popup pollers
+    assert client.post("/api/scan/purchase",
+                       json={"barcode": "4066600000002"}).status_code == 404
+    body = client.get(f"/api/scan/events?since={baseline}").json()
+    assert body["events"], "unknown scan should produce an event"
+    event = body["events"][-1]
+    assert event["barcode"] == "4066600000002"
+    assert event["kind"] == "unknown:bought"
+
+
+def test_discard_pending_barcode(client):
+    FakeOFF.responses["4066600000003"] = SALT_PRODUCT
+    client.post("/api/barcode/lookup", json={"barcode": "4066600000003"})
+    codes = {e["barcode"] for e in client.get("/api/barcode/pending").json()["barcodes"]}
+    assert "4066600000003" in codes
+
+    response = client.delete("/api/barcode/pending/4066600000003")
+    assert response.status_code == 200
+    assert response.json()["discarded"] == "4066600000003"
+    codes = {e["barcode"] for e in client.get("/api/barcode/pending").json()["barcodes"]}
+    assert "4066600000003" not in codes
+    assert client.delete("/api/barcode/pending/4066600000003").status_code == 404

@@ -233,3 +233,17 @@ export function assignBarcode(barcode: string, target: { itemId?: string; itemNa
     body: JSON.stringify({ barcode, item_id: target.itemId, item_name: target.itemName }),
   });
 }
+
+export interface ScanEvent {
+  seq: number;
+  kind: string;
+  barcode: string;
+}
+
+export function fetchScanEvents(since: number): Promise<{ seq: number; events: ScanEvent[] }> {
+  return request<{ seq: number; events: ScanEvent[] }>(`/scan/events?since=${since}`);
+}
+
+export function discardPendingBarcode(barcode: string): Promise<{ discarded: string }> {
+  return request(`/barcode/pending/${barcode}`, { method: "DELETE" });
+}

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { Item, ItemPatch, ModelList, PendingBarcode, Recipe, RecipeEditPatch, Receipt, Settings, SettingsPatch, ShoppingListEntry, Tab } from "./types";
 import {
   addMissingToShoppingList,
@@ -9,9 +9,11 @@ import {
   deleteRecipe,
   editRecipe,
   assignBarcode,
+  discardPendingBarcode,
   fetchItems,
   fetchModels,
   fetchPendingBarcodes,
+  fetchScanEvents,
   fetchReceipts,
   fetchRecipes,
   fetchSettings,
@@ -67,6 +69,7 @@ export default function App() {
   const [models, setModels] = useState<ModelList>({ local: [], llmAvailable: false });
   const [pending, setPending] = useState<PendingBarcode[]>([]);
   const [reviewOpen, setReviewOpen] = useState(false);
+  const lastScanSeq = useRef(0);
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -78,50 +81,43 @@ export default function App() {
   }, [settings.planningEnabled, tab]);
 
   useEffect(() => {
-    // scanned barcodes without an item mapping: poll the review queue and pop
-    // the review sheet whenever a not-yet-dismissed scan lands
+    // baseline the scan-event sequence, then poll: any new unknown scan opens
+    // the review sheet. No permanent dismissal — closing just waits for the
+    // next scan.
+    fetchScanEvents(0)
+      .then((body) => { lastScanSeq.current = body.seq; })
+      .catch(() => { /* ignore */ });
+    fetchPendingBarcodes().then(setPending).catch(() => { /* ignore */ });
     const tick = () => {
-      fetchPendingBarcodes()
-        .then((entries) => {
-          setPending(entries);
-          try {
-            const dismissed = new Set(JSON.parse(localStorage.getItem("openpantry.dismissed-barcodes") ?? "[]"));
-            const fresh = entries.some((e) => !dismissed.has(e.barcode));
-            if (fresh) setReviewOpen(true);
-          } catch { /* ignore */ }
+      fetchScanEvents(lastScanSeq.current)
+        .then((body) => {
+          if (body.seq === lastScanSeq.current) return;
+          lastScanSeq.current = body.seq;
+          return fetchPendingBarcodes().then((entries) => {
+            setPending(entries);
+            if (entries.length > 0) setReviewOpen(true);
+          });
         })
         .catch(() => { /* backend briefly away */ });
     };
-    tick();
-    const timer = window.setInterval(tick, 2500);
+    const timer = window.setInterval(tick, 2000);
     return () => window.clearInterval(timer);
   }, []);
 
-  const dismissBarcode = (barcode: string) => {
-    setPending((prev) => prev.filter((e) => e.barcode !== barcode));
-    try {
-      const dismissed = new Set(JSON.parse(localStorage.getItem("openpantry.dismissed-barcodes") ?? "[]"));
-      dismissed.add(barcode);
-      localStorage.setItem("openpantry.dismissed-barcodes", JSON.stringify([...dismissed]));
-    } catch { /* ignore */ }
+  const removePendingBarcode = async (barcode: string) => {
+    await discardPendingBarcode(barcode).catch(console.error);
+    const remaining = pending.filter((e) => e.barcode !== barcode);
+    setPending(remaining);
+    if (remaining.length === 0) setReviewOpen(false);
   };
 
-  const closeReview = () => {
-    // closing means "later" for everything currently shown
-    pending.forEach((e) => {
-      try {
-        const dismissed = new Set(JSON.parse(localStorage.getItem("openpantry.dismissed-barcodes") ?? "[]"));
-        dismissed.add(e.barcode);
-        localStorage.setItem("openpantry.dismissed-barcodes", JSON.stringify([...dismissed]));
-      } catch { /* ignore */ }
-    });
-    setReviewOpen(false);
-  };
+  const closeReview = () => setReviewOpen(false);
 
   const reviewAssign = async (barcode: string, target: { itemId?: string; itemName?: string }) => {
     const item: Item = await assignBarcode(barcode, target);
     setItems((prev) => (prev.some((i) => i.id === item.id) ? prev.map((i) => (i.id === item.id ? item : i)) : [...prev, item]));
     setPending((prev) => prev.filter((e) => e.barcode !== barcode));
+    if (pending.length === 1) setReviewOpen(false);
   };
 
   useEffect(() => {
@@ -352,7 +348,7 @@ export default function App() {
         <ReviewSheet
           entries={pending}
           onAssign={reviewAssign}
-          onDismiss={dismissBarcode}
+          onRemove={removePendingBarcode}
           onClose={closeReview}
         />
       )}

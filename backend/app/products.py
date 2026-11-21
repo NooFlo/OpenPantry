@@ -237,6 +237,13 @@ def parse_quantity(quantity: str | None) -> tuple[float, str] | None:
     return amount, "pcs"
 
 
+def discard_cached(barcode: str) -> bool:
+    """Drop a cached product from the review queue (and any cached miss)."""
+    with get_db() as db:
+        cursor = db.execute("DELETE FROM barcode_cache WHERE barcode = ?", (barcode,))
+    return cursor.rowcount > 0
+
+
 def pending_barcodes() -> list[dict]:
     """Cached, identified products whose barcode isn't assigned to an item yet:
     the review queue for scans that came in before their mapping was confirmed."""
