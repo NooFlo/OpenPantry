@@ -19,7 +19,7 @@ function EntryCard({ entry, onAssign, onRemove }: {
   onRemove: ReviewSheetProps["onRemove"];
 }) {
   const [busy, setBusy] = useState(false);
-  const [itemName, setItemName] = useState(entry.name);
+  const [itemName, setItemName] = useState(entry.name ?? "");
   const [error, setError] = useState<string | null>(null);
 
   const assign = async (target: { itemId?: string; itemName?: string }) => {
@@ -46,7 +46,10 @@ function EntryCard({ entry, onAssign, onRemove }: {
           />
         )}
         <div style={{ flex: 1 }}>
-          <strong>{entry.name}</strong>
+          <strong>{entry.name ?? "Unknown product"}</strong>
+          {(entry.name == null) && (
+            <div className="item-sub">Open Food Facts doesn&apos;t know this barcode yet — type a name below</div>
+          )}
           {entry.brand && <div className="item-sub">{entry.brand}</div>}
           <div className="item-sub" style={{ fontFamily: "monospace" }}>
             {entry.barcode}{entry.quantity ? ` · ${entry.quantity}` : ""}
@@ -94,6 +97,7 @@ function EntryCard({ entry, onAssign, onRemove }: {
       </div>
       <p className="item-sub" style={{ margin: "6px 0 0" }}>
         Package size and unit come from the product data{error ? ` — ${error}` : ""} when creating a new item.
+        {entry.offMiss && " None found — you can set size and unit later in the item settings."}
       </p>
     </div>
   );

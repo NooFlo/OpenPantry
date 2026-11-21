@@ -463,6 +463,7 @@ def barcode_assign(body: BarcodeAssignRequest):
                 unit=unit or "pcs",
                 package_size=package_size or 1.0,
                 barcode=barcode,
+                tracking_mode="qty",  # count packages: scans add +1 each
             )
     return camelize(item)
 

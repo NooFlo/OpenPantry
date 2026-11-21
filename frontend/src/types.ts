@@ -200,7 +200,10 @@ export interface ModelList {
 
 export interface PendingBarcode {
   barcode: string;
-  name: string;
+  /** null for OFF misses — the user names the product in the sheet. */
+  name: string | null;
+  /** True when Open Food Facts doesn't know this barcode at all. */
+  offMiss?: boolean;
   brand?: string | null;
   quantity?: string | null;
   categories?: string[];

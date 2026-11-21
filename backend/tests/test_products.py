@@ -382,3 +382,23 @@ def test_guess_category():
     assert products.guess_category(["vegetables", "tomatoes"]) == "Produce"
     assert products.guess_category(["salts", "condiments"]) == "Pantry"
     assert products.guess_category(None) == "Pantry"
+
+
+def test_off_miss_lands_in_review_queue(client):
+    """A barcode Open Food Facts doesn't know still opens the review popup,
+    nameless, so the user can name it; assigning then creates a qty item."""
+    code = "4066600000004"
+    assert FakeOFF.responses.get(code) is None  # a guaranteed OFF miss
+    assert client.post("/api/scan/purchase", json={"barcode": code}).status_code == 404
+
+    entries = client.get("/api/barcode/pending").json()["barcodes"]
+    entry = next(e for e in entries if e["barcode"] == code)
+    assert entry["name"] is None
+    assert entry["offMiss"] is True
+
+    item = client.post("/api/barcode/assign", json={
+        "barcode": code, "item_name": "Scanfix Unbekannt"}).json()
+    assert item["trackingMode"] == "qty"
+    codes = {e["barcode"] for e in client.get("/api/barcode/pending").json()["barcodes"]}
+    assert code not in codes
+    client.delete(f"/api/items/{item['id']}")

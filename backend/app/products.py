@@ -272,18 +272,22 @@ def discard_cached(barcode: str) -> bool:
 
 
 def pending_barcodes() -> list[dict]:
-    """Cached, identified products whose barcode isn't assigned to an item yet:
-    the review queue for scans that came in before their mapping was confirmed."""
+    """Cached scans whose barcode isn't assigned to an item yet: the review
+    queue. Found products come with their Open Food Facts data; misses
+    (OFF doesn't know the barcode) come nameless for manual naming."""
     with get_db() as db:
         rows = db.execute(
             "SELECT p.* FROM barcode_cache p"
             " LEFT JOIN item_barcodes b ON b.barcode = p.barcode"
-            " WHERE p.status = 'found' AND b.item_id IS NULL"
+            " WHERE p.status IN ('found', 'miss') AND b.item_id IS NULL"
             " ORDER BY p.fetched_at DESC"
         ).fetchall()
     pending = []
     for row in rows:
-        entry = _from_row(dict(row))
+        row = dict(row)
+        entry = _from_row(row)
+        if row["status"] == "miss":
+            entry["off_miss"] = True
         entry["suggestions"] = suggest_items(entry)
         pending.append(entry)
     return pending

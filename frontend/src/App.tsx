@@ -82,12 +82,14 @@ export default function App() {
 
   useEffect(() => {
     // baseline the scan-event sequence, then poll: any new unknown scan opens
-    // the review sheet. No permanent dismissal — closing just waits for the
-    // next scan.
+    // the review sheet; scans waiting from before a reload reopen it too.
     fetchScanEvents(0)
       .then((body) => { lastScanSeq.current = body.seq; })
       .catch(() => { /* ignore */ });
-    fetchPendingBarcodes().then(setPending).catch(() => { /* ignore */ });
+    fetchPendingBarcodes().then((entries) => {
+      setPending(entries);
+      if (entries.length > 0) setReviewOpen(true);
+    }).catch(() => { /* ignore */ });
     const tick = () => {
       fetchScanEvents(lastScanSeq.current)
         .then((body) => {
