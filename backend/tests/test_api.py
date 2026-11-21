@@ -258,7 +258,10 @@ def test_match_creates_item_with_ingredient_unit(client):
 Alles vermischen."""
     recipe = client.post("/api/recipes/import", json={"kind": "text", "value": text}).json()
     mehl = next(i for i in recipe["ingredients"] if i["raw"] == "300 g Dinkelmehl")
-    assert mehl["suggestion"] == "Dinkelmehl"
+    # concept cascade: Dinkelmehl (bread flour) is not stocked, so the
+    # stocked sibling "Mehl" is suggested as a substitute
+    assert mehl["suggestion"] == "Mehl"
+    assert mehl["substituteKind"] == "sibling"
     response = client.post(
         f"/api/recipes/{recipe['id']}/ingredients/{mehl['id']}/match",
         json={"item_name": "Weizenmehl Type 405"},
@@ -573,7 +576,10 @@ Zutaten für 2 Portionen:
 Alles anrichten."""
     recipe = client.post("/api/recipes/import", json={"kind": "text", "value": text}).json()
     by_raw = {i["raw"]: i for i in recipe["ingredients"]}
-    assert by_raw["3 spring onions, white and green parts separated"]["suggestion"] == "spring onions"
+    # canonicalized to "spring onions", then the concept cascade proposes
+    # the stocked sibling (Zwiebeln) instead of a create-new fallback
+    assert by_raw["3 spring onions, white and green parts separated"]["suggestion"] == "Zwiebeln"
+    assert by_raw["3 spring onions, white and green parts separated"]["substituteKind"] == "sibling"
     garlic = by_raw["2 Zehen Knoblauch, fein gehackt"]
     assert garlic["suggestion"] in (None, "Knoblauch")  # matched seeded item or plain name, never a prep hint
 
@@ -596,7 +602,9 @@ Kochen und servieren."""
     recipe = client.post("/api/recipes/import", json={"kind": "text", "value": text}).json()
     ing = next(i for i in recipe["ingredients"] if i["raw"] == "1 Thumb-sized piece ginger, grated")
     assert seen["names"] == ["Thumb-sized piece ginger"]
-    assert ing["suggestion"] == "Ginger"
+    # canonicalized to "Ginger" (concept ginger, not stocked): the cascade
+    # suggests the German buy name so one tap creates a shoppable pantry item
+    assert ing["suggestion"] == "Ingwer"
 
 
 def test_canonicalize_names_rejects_mistranslations(monkeypatch):

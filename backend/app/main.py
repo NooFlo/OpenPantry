@@ -12,7 +12,7 @@ from fastapi.responses import HTMLResponse, PlainTextResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import extract, hass, labels, mail, planning, products, repo, seed, telemetry
+from . import catalog, extract, hass, labels, mail, planning, products, repo, seed, telemetry
 from .config import get_cloud_config, get_model_choice, set_model_choice
 from .db import init_db
 
@@ -78,6 +78,7 @@ class ItemUpdateRequest(BaseModel):
     tracking_mode: str | None = None
     buy_amount: float | None = None
     barcode: str | None = None
+    name: str | None = None
 
 
 class ShoppingListRequest(BaseModel):
@@ -299,6 +300,16 @@ def scan_purchase(body: BarcodeRequest):
             _record_scan_event("unknown:bought", body.barcode)
             raise HTTPException(404, "unknown barcode")
         existing = repo.find_item_by_name(product["name"])
+        if not existing:
+            # concept-level reuse: another brand of the same generic food
+            # ("Kichererbsen" vs "CECI SOTTOVUOTO") stocks the SAME generic
+            # item instead of spawning a duplicate
+            concept = catalog.resolve_item_concept({"name": product["name"]})
+            if concept:
+                same_concept = [i for i in repo.list_items()
+                                if catalog.resolve_item_concept(i) == concept]
+                if same_concept:
+                    existing = same_concept[0]
         if existing:
             item = repo.add_item_barcode(existing["id"], body.barcode) or existing
         else:
@@ -509,9 +520,12 @@ def update_item(item_id: str, body: ItemUpdateRequest):
             new_barcode = cleaned
         else:
             new_barcode = None  # an empty barcode clears the mapping
-    item = repo.update_item(item_id, body.min_quantity, body.package_size,
-                            body.tracking_mode, buy_amount=body.buy_amount,
-                            barcode=new_barcode)
+    try:
+        item = repo.update_item(item_id, body.min_quantity, body.package_size,
+                                body.tracking_mode, buy_amount=body.buy_amount,
+                                barcode=new_barcode, name=body.name)
+    except ValueError as error:
+        raise HTTPException(409, str(error))
     if not item:
         raise HTTPException(404, "item not found")
     return camelize(item)
@@ -612,28 +626,69 @@ def _canonical_names(data: dict, choice: dict | None, cloud: dict | None) -> dic
 ALWAYS_AVAILABLE = {"water", "wasser"}
 
 
-def _ingredient_entry(ing: dict, canon: dict[str, str]) -> dict:
+def _ingredient_entry(ing: dict, canon: dict[str, str], items: list | None = None) -> dict | None:
+    """One imported ingredient line -> its pantry row.
+
+    Junk (equipment, page noise) is dropped by returning None; references
+    to things the recipe itself prepares become untracked availability
+    rows; everything else runs the concept cascade in app/catalog.py:
+
+    identity -> auto-matched item, in stock variants/blends/siblings ->
+    one-tap suggestion with kind + note, known-but-missing concept -> the
+    German buy name, unknown -> the cleaned name (create-on-tap fallback).
+    """
     name = extract.base_ingredient_name(ing["name"])
-    name = canon.get(name, name)
+    name = (canon.get(name, name) or name).strip()
+    if catalog.junk_class(name):
+        return None
     entry = {"raw": ing["raw"], "amount": ing.get("amount"), "unit": ing.get("unit"),
              "tracked": True, "suggestion": None}
     if ing.get("alt_group"):
         entry["alt_group"] = ing["alt_group"]
-    if name.lower() in ALWAYS_AVAILABLE:
+    if catalog.is_prepared_reference(ing.get("raw") or "", name) or name.lower() in ALWAYS_AVAILABLE:
         entry["tracked"] = False
         return entry
+    items = items if items is not None else repo.list_items()
+    # an exact item of the same name always wins (user-created names are
+    # the strongest possible signal)
     item = repo.find_item_by_name(name)
     if item:
         entry["item_id"] = item["id"]
-    else:
-        match = repo.best_name_match(name)
-        entry["suggestion"] = match["name"] if match else name
+        concept = catalog.resolve_item_concept(item)
+        if concept:
+            entry["concept_id"] = concept
+        return entry
+    res = catalog.resolve_for_stock(name, items)
+    if res["concept"]:
+        entry["concept_id"] = res["concept"]
+    if res["kind"] == "staple":
+        entry["tracked"] = False
+        return entry
+    if res["kind"] == "identity":
+        entry["item_id"] = res["item_id"]
+        if res["note"]:  # form-drift hint ("Samen statt gemahlen")
+            entry["substitute_note"] = res["note"]
+        return entry
+    if res["kind"] in ("variant", "in_blend", "sibling"):
+        entry["suggestion"] = res["item_name"]
+        entry["substitute_kind"] = res["kind"]
+        entry["substitute_note"] = res["note"]
+        return entry
+    if res["kind"] in ("components", "buy"):
+        # the buy name doubles as the mapped item name when tapped:
+        # confirming "Kreuzkümmel" once serves every future recipe
+        entry["suggestion"] = res.get("buy_name") or name
+        if res["kind"] == "components":
+            entry["substitute_note"] = res["note"]
+        return entry
+    entry["suggestion"] = res["cleaned"] if res.get("cleaned") else name
     return entry
 
 
 def _create_recipe_with_matches(data: dict, choice: dict | None = None, cloud: dict | None = None) -> dict:
     canon = _canonical_names(data, choice, cloud)
-    ingredients = [_ingredient_entry(ing, canon) for ing in data["ingredients"]]
+    items = repo.list_items()
+    ingredients = [e for e in (_ingredient_entry(ing, canon, items) for ing in data["ingredients"]) if e]
     with telemetry.span("step_links", steps=len(data["steps"])):
         links = extract.link_ingredients_in_steps(data["steps"], ingredients, choice, cloud)
     recipe = repo.create_recipe(data["title"], data["source"], data["base_portions"],
@@ -661,7 +716,8 @@ def refresh_recipe(recipe_id: str):
         trace.finish("no_ingredients")
         raise HTTPException(422, "could not extract any ingredients")
     canon = _canonical_names(data, choice, cloud)
-    ingredients = [_ingredient_entry(ing, canon) for ing in data["ingredients"]]
+    items = repo.list_items()
+    ingredients = [e for e in (_ingredient_entry(ing, canon, items) for ing in data["ingredients"]) if e]
     with telemetry.span("step_links", steps=len(data["steps"])):
         links = extract.link_ingredients_in_steps(data["steps"], ingredients, choice, cloud)
     result = repo.replace_recipe(recipe_id, data["title"], data["source"],
@@ -750,7 +806,8 @@ def _edited_ingredients(recipe: dict, edits: list) -> list[dict]:
         parsed = extract.parse_ingredient_line(raw)
         base = parsed or {"raw": raw, "amount": None, "unit": None, "name": raw}
         for alt in extract.expand_alternatives([base]):
-            entries.append(_ingredient_entry(alt, {}))
+            if entry := _ingredient_entry(alt, {}):
+                entries.append(entry)
     # a group reduced to a single option is a plain line again
     counts: dict[str, int] = {}
     for entry in entries:
@@ -801,6 +858,88 @@ def _push_to_ha():
     if not hass.enabled():
         return False
     return hass.sync(repo.list_shopping_list())
+
+
+@app.post("/api/catalog/standardize")
+def standardize_catalog():
+    """One-shot catalog tidy-up. Deterministic only (no LLM):
+
+    1. tag every inventory item with its food concept
+    2. re-run the matching cascade over every recipe: confirmed matches are
+       preserved, junk rows are dropped, prepared references become
+       availability rows, suggestions/notes backfill the rest
+    3. recipes whose rows changed get their (qty) step spans re-derived
+
+    Idempotent; safe to re-run any time.
+    """
+    trace = telemetry.start_trace("catalog_standardize")
+    telemetry.set_meta(note="deterministic rematch")
+    summary = {"itemsTagged": 0, "itemsUnmatched": [], "matched": 0,
+               "substitutions": 0, "buys": 0, "untracked": 0,
+               "dropped": [], "recipesTouched": 0}
+    for item in repo.list_items():
+        concept = catalog.resolve_item_concept(item)
+        if concept:
+            repo.set_item_concept(item["id"], concept)
+            summary["itemsTagged"] += 1
+        else:
+            summary["itemsUnmatched"].append(item["name"])
+    items = repo.list_items()  # refreshed, now carrying concept ids
+    for recipe in repo.list_recipes():
+        touched = False
+        for ing in recipe["ingredients"]:
+            if ing.get("item_id") and ing.get("tracked"):
+                continue  # confirmed matches are sacred
+            raw = ing.get("raw") or ""
+            parsed = extract.parse_ingredient_line(raw)
+            name = extract.base_ingredient_name((parsed or {}).get("name") or raw) or raw
+            fresh = _ingredient_entry(
+                {"name": name, "raw": raw, "amount": ing.get("amount"),
+                 "unit": ing.get("unit")}, {}, items)
+            if fresh is None:  # equipment / page noise
+                repo.delete_ingredient(recipe["id"], ing["id"])
+                summary["dropped"].append({"recipe": recipe["title"], "raw": raw[:80]})
+                touched = True
+                continue
+            if ing.get("tracked") and fresh.get("tracked") is False:
+                repo.standardize_ingredient(recipe["id"], ing["id"], {"tracked": False})
+                summary["untracked"] += 1
+                touched = True
+                continue
+            if fresh.get("item_id") and not ing.get("item_id"):
+                repo.standardize_ingredient(recipe["id"], ing["id"], {
+                    "item_id": fresh["item_id"],
+                    "concept_id": fresh.get("concept_id"),
+                    "suggestion": None,
+                    "substitute_kind": None,
+                    "substitute_note": fresh.get("substitute_note"),
+                })
+                summary["matched"] += 1
+                touched = True
+                continue
+            fields = {"suggestion": fresh.get("suggestion"),
+                       "concept_id": fresh.get("concept_id"),
+                       "substitute_kind": fresh.get("substitute_kind"),
+                       "substitute_note": fresh.get("substitute_note")}
+            if any(ing.get(k) != v for k, v in fields.items()):
+                repo.standardize_ingredient(recipe["id"], ing["id"], fields)
+                if fields.get("suggestion"):
+                    kind = fresh.get("substitute_kind")
+                    if kind in ("variant", "in_blend", "sibling"):
+                        summary["substitutions"] += 1
+                    elif kind is None and fresh.get("concept_id"):
+                        summary["buys"] += 1
+                touched = True
+        if touched:
+            summary["recipesTouched"] += 1
+            updated = repo.get_recipe(recipe["id"])
+            links = extract.link_ingredients_in_steps(updated["steps"],
+                                                      updated["ingredients"],
+                                                      None, None)
+            repo.set_step_ingredient_links(recipe["id"], links)
+    telemetry.set_meta(**summary)
+    trace.finish("ok")
+    return summary  # already camelCase
 
 
 @app.post("/api/shopping-list/push")

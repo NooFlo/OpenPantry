@@ -71,6 +71,12 @@ def _replace_fractions(line: str) -> str:
     for frac, dec in FRACTIONS.items():
         line = re.sub(r"(\d+)\s*" + frac, lambda m, d=dec: str(float(m.group(1)) + float(d)), line)
         line = line.replace(frac, dec)
+    # ASCII fractions: "1/2 lemon" -> "0.5 lemon" (newspaper recipes paste
+    # them constantly; the INGREDIENT_RE can't match bare "1/2")
+    def _ascii_frac(match):
+        a, b = int(match.group(1)), int(match.group(2))
+        return f"{a / b:.3f}".rstrip("0").rstrip(".") if b else match.group(0)
+    line = re.sub(r"\b(\d+)\s*/\s*(\d+)\b", _ascii_frac, line)
     return line
 STEP_HINTS = re.compile(r"\b(minut|min\.|backen|braten|kochen|erhitzen|rühren|ruehren|geben|stir|bake|fry|boil|heat|mix|add|preheat|oven)\b", re.IGNORECASE)
 
@@ -308,12 +314,61 @@ def to_base_unit(amount: float, unit: str | None) -> tuple[float, str] | None:
 def parse_ingredient_line(line: str) -> dict | None:
     line = strip_markdown(line.strip())
     line = _replace_fractions(line)
+    # LLM splits like "And 1/2 Tablespoons active dry yeast" leak a leading
+    # And/Und into the amount slot
+    line = re.sub(r"^(?:and|und)\s+(?=\d)", "", line, flags=re.IGNORECASE)
+    # US volume lines that carry their metric equivalent in parens:
+    # "2 cups (300g) frozen blueberries" or "0.75 cup caster sugar (165g)"
+    vol = re.match(
+        r"^(\d+(?:[.,]\d+)?)\s*(?:cups?|tbsp|tbsps?|tablespoons?|tsp|"
+        r"teaspoons?|fl\.?\s*oz)\s*\(([^)]*?(\d+(?:[.,]\d+)?)\s*"
+        r"(g|gr|gramm|kg|ml|l|liter|milliliter)\b[^)]*)\)\s+(.+?)\s*$",
+        line, re.IGNORECASE)
+    if vol:
+        line = f"{vol.group(3)}{vol.group(4).lower().replace('gramm','g').replace('liter','l').replace('milliliter','ml').replace('gr','g')} {vol.group(5)}"
+    else:
+        vol2 = re.match(
+            r"^(\d+(?:[.,]\d+)?)\s*(?:cups?|tbsp|tbsps?|tablespoons?|tsp|"
+            r"teaspoons?)\s+(.+?)\s*\((\d+(?:[.,]\d+)?)\s*"
+            r"(g|gr|gramm|kg|ml|l)\)\s*$", line, re.IGNORECASE)
+        if vol2:
+            line = f"{vol2.group(3)}{vol2.group(4).lower().replace('gramm','g').replace('gr','g')} {vol2.group(2)}"
+    # "1 x 700g glass jar tomato passata": multiplier + metric pack before
+    # the name — take the grams directly. The "N x" OR a container word must
+    # be present, otherwise every "500 g Nudeln" would be rewritten.
+    pack = re.match(
+        r"^(\d+(?:[.,]\d+)?)\s*x\s*(\d+(?:[.,]\d+)?)\s*"
+        r"(g|gr|gramm|kg|ml|l)\b\s*(.*)$", line, re.IGNORECASE)
+    container = re.match(
+        r"^(\d+(?:[.,]\d+)?)\s*(g|gr|gramm|kg|ml|l)\s+"
+        r"(?:glass\s+jar|glass|jar|bottle|tin|pkt)\b\s+(.*)$",
+        line, re.IGNORECASE)
+    if pack and pack.group(4):
+        line = f"{pack.group(2)}{pack.group(3).lower().replace('gramm','g').replace('gr','g')} {pack.group(4)}"
+    elif container and container.group(3):
+        line = f"{container.group(1)}{container.group(2).lower().replace('gramm','g').replace('gr','g')} {container.group(3)}"
     match = INGREDIENT_RE.match(line)
     if not match:
         return None
     raw_amount, _range_end, raw_unit, name = match.groups()
     amount = float(raw_amount.replace(",", "."))
     name = re.sub(r"^\s*\([^)]*\)\s*", "", name).strip()
+    # containers are packaging, not the food: "packet of spaghetti",
+    # "glass jar passata", "pkt Shin Ramen Black"
+    for _ in range(3):
+        stripped = re.sub(
+            r"^(?:pkt|packet|packets|tin|tins|bottle|bottles|glass jar|jar|glass|"
+            r"bunch|punnet|head|block|sheet|sheets|strip|strips)\s+(?:of\s+)?",
+            "", name, flags=re.IGNORECASE).strip()
+        if stripped == name:
+            break
+        name = stripped
+    # serving and taste tails: they belong to prose, not the pantry name
+    name = re.sub(
+        r",?\s*(?:to serve|to taste|to season|to garnish|for garnish|"
+        r"zum servieren|nach geschmack|als beilage|zum bestreuen|"
+        r"zum garnieren|see my recipe|see recipe|see below)\b.*$"
+        r"|\s+plus\s+.*$", "", name, flags=re.IGNORECASE).strip()
     converted = to_base_unit(amount, raw_unit)
     if converted:
         amount, unit = converted

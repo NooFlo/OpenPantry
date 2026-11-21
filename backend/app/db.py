@@ -164,6 +164,8 @@ def init_db():
         item_columns = {row["name"] for row in db.execute("PRAGMA table_info(items)")}
         if "buy_amount" not in item_columns:
             db.execute("ALTER TABLE items ADD COLUMN buy_amount REAL")
+        if "concept_id" not in item_columns:
+            db.execute("ALTER TABLE items ADD COLUMN concept_id TEXT")
         if "tracking_mode" not in item_columns:
             db.execute("ALTER TABLE items ADD COLUMN tracking_mode TEXT NOT NULL DEFAULT 'binary'")
             # data-entry heuristic: a single entered unit is binary,
@@ -174,6 +176,14 @@ def init_db():
         columns = {row["name"] for row in db.execute("PRAGMA table_info(ingredients)")}
         if "unit" not in columns:
             db.execute("ALTER TABLE ingredients ADD COLUMN unit TEXT")
+        # concept catalog: every ingredient resolves to a canonical food
+        # concept; substitution suggestions carry their kind + a human note
+        if "concept_id" not in columns:
+            db.execute("ALTER TABLE ingredients ADD COLUMN concept_id TEXT")
+        if "substitute_kind" not in columns:
+            db.execute("ALTER TABLE ingredients ADD COLUMN substitute_kind TEXT")
+        if "substitute_note" not in columns:
+            db.execute("ALTER TABLE ingredients ADD COLUMN substitute_note TEXT")
         # and/or alternative groups: members share alt_group; the picked
         # option is marked selected=1 (exactly one per group)
         if "alt_group" not in columns:

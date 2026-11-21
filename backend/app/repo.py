@@ -3,6 +3,7 @@ import json
 import re
 import uuid
 
+from . import catalog
 from .db import get_db
 
 
@@ -135,7 +136,7 @@ def set_item_barcode(item_id: str, barcode: str) -> dict | None:
 
 def create_item(name: str, category: str = "Pantry", unit: str = "pcs",
                 package_size: float = 1.0, barcode: str | None = None,
-                tracking_mode: str = "binary") -> dict:
+                tracking_mode: str = "binary", concept_id: str | None = None) -> dict:
     item = {
         "id": new_id(),
         "name": name,
@@ -148,10 +149,18 @@ def create_item(name: str, category: str = "Pantry", unit: str = "pcs",
         "uncertain": 0,
         "tracking_mode": tracking_mode,
     }
+    if not concept_id:
+        concept_id = catalog.resolve_item_concept(item)
+        if concept_id and category == "Pantry":
+            # family-driven category default (spices stay Pantry, produce
+            # becomes Produce, ...) — only when the caller had no opinion
+            item["category"] = catalog.FAMILY_DEFAULT_CATEGORY.get(
+                catalog.CONCEPTS[concept_id]["family"], category)
+    item["concept_id"] = concept_id
     with get_db() as db:
         db.execute(
-            "INSERT INTO items (id, name, category, quantity, unit, min_quantity, package_size, barcode, uncertain, tracking_mode)"
-            " VALUES (:id, :name, :category, :quantity, :unit, :min_quantity, :package_size, :barcode, :uncertain, :tracking_mode)",
+            "INSERT INTO items (id, name, category, quantity, unit, min_quantity, package_size, barcode, uncertain, tracking_mode, concept_id)"
+            " VALUES (:id, :name, :category, :quantity, :unit, :min_quantity, :package_size, :barcode, :uncertain, :tracking_mode, :concept_id)",
             item,
         )
         if barcode:
@@ -183,8 +192,19 @@ def update_item(item_id: str, min_quantity: float | None = None,
                 package_size: float | None = None,
                 tracking_mode: str | None = None,
                 buy_amount: float | None = None,
-                barcode: object = _UNSET) -> dict | None:
+                barcode: object = _UNSET,
+                name: str | None = None) -> dict | None:
     with get_db() as db:
+        if name is not None:
+            name = name.strip()
+            if not name:
+                raise ValueError("item name must not be empty")
+            clash = db.execute(
+                "SELECT id, name FROM items WHERE lower(name) = lower(?) AND id != ?",
+                (name, item_id)).fetchone()
+            if clash:
+                raise ValueError(f"name already used by {clash['name']}")
+            db.execute("UPDATE items SET name = ? WHERE id = ?", (name, item_id))
         if min_quantity is not None:
             db.execute("UPDATE items SET min_quantity = ? WHERE id = ?", (min_quantity, item_id))
         if buy_amount is not None:
@@ -491,7 +511,8 @@ def _ingredients_for(recipe_id: str) -> list[dict]:
     # group stays together in the source list's position
     with get_db() as db:
         rows = db.execute(
-            "SELECT id, raw, amount, unit, item_id, tracked, suggestion, alt_group, selected"
+            "SELECT id, raw, amount, unit, item_id, tracked, suggestion, alt_group, selected,"
+            " concept_id, substitute_kind, substitute_note"
             " FROM ingredients WHERE recipe_id = ? ORDER BY rowid",
             (recipe_id,),
         ).fetchall()
@@ -516,11 +537,12 @@ def _insert_ingredients(db, recipe_id: str, ingredients: list[dict]):
     for ing in ingredients:
         db.execute(
             "INSERT INTO ingredients (id, recipe_id, raw, amount, unit, item_id, tracked, suggestion,"
-            " alt_group, selected)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            " alt_group, selected, concept_id, substitute_kind, substitute_note)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (new_id(), recipe_id, ing.get("raw", ""), ing.get("amount"), ing.get("unit"),
              ing.get("item_id"), 1 if ing.get("tracked", True) else 0, ing.get("suggestion"),
-             ing.get("alt_group"), 1 if ing.get("selected") else 0),
+             ing.get("alt_group"), 1 if ing.get("selected") else 0,
+             ing.get("concept_id"), ing.get("substitute_kind"), ing.get("substitute_note")),
         )
 
 
@@ -601,12 +623,64 @@ def replace_recipe(recipe_id: str, title: str, source: str, base_portions: float
 
 def match_recipe_ingredient(recipe_id: str, ingredient_id: str, item_id: str, amount: float) -> dict | None:
     with get_db() as db:
+        item = db.execute("SELECT * FROM items WHERE id = ?", (item_id,)).fetchone()
+        concept_id = catalog.resolve_item_concept(dict(item)) if item else None
+        row = db.execute(
+            "SELECT substitute_kind, substitute_note FROM ingredients WHERE id = ? AND recipe_id = ?",
+            (ingredient_id, recipe_id)).fetchone()
+        # a confirmed variant/blend/sibling suggestion stays marked as a
+        # substitute (the user chose "use this instead"); identity rows
+        # drop the mark because the concept itself matches
+        kind = row["substitute_kind"] if row and row["substitute_kind"] in (
+            "variant", "in_blend", "sibling") else None
+        note = row["substitute_note"] if row else None
+        if kind is None:
+            note = None
         db.execute(
-            "UPDATE ingredients SET item_id = ?, amount = ?, suggestion = NULL, tracked = 1"
+            "UPDATE ingredients SET item_id = ?, amount = ?, suggestion = NULL, tracked = 1,"
+            " concept_id = ?, substitute_kind = ?, substitute_note = ?"
             " WHERE id = ? AND recipe_id = ?",
-            (item_id, amount, ingredient_id, recipe_id),
+            (item_id, amount, concept_id, kind, note, ingredient_id, recipe_id),
         )
     return get_recipe(recipe_id)
+
+
+STANDARDIZE_FIELDS = {"item_id", "suggestion", "tracked", "concept_id",
+                      "substitute_kind", "substitute_note"}
+
+
+def standardize_ingredient(recipe_id: str, ingredient_id: str, fields: dict) -> None:
+    """Update specific match fields of one ingredient row (catalog
+    standardize job). Whitelisted columns only."""
+    sets, vals = [], []
+    for key, value in fields.items():
+        if key not in STANDARDIZE_FIELDS:
+            raise ValueError(f"field {key} not standardizable")
+        sets.append(f"{key} = ?")
+        vals.append(value)
+    if not sets:
+        return
+    vals.extend([ingredient_id, recipe_id])
+    with get_db() as db:
+        db.execute(
+            f"UPDATE ingredients SET {', '.join(sets)} WHERE id = ? AND recipe_id = ?",
+            vals,
+        )
+
+
+def delete_ingredient(recipe_id: str, ingredient_id: str) -> bool:
+    with get_db() as db:
+        cursor = db.execute(
+            "DELETE FROM ingredients WHERE id = ? AND recipe_id = ?",
+            (ingredient_id, recipe_id),
+        )
+        return cursor.rowcount > 0
+
+
+def set_item_concept(item_id: str, concept_id: str | None) -> None:
+    with get_db() as db:
+        db.execute("UPDATE items SET concept_id = ? WHERE id = ?",
+                   (concept_id, item_id))
 
 
 def select_recipe_ingredient(recipe_id: str, ingredient_id: str) -> dict | None:
