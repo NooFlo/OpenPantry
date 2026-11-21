@@ -402,3 +402,30 @@ def test_off_miss_lands_in_review_queue(client):
     codes = {e["barcode"] for e in client.get("/api/barcode/pending").json()["barcodes"]}
     assert code not in codes
     client.delete(f"/api/items/{item['id']}")
+
+
+def test_assign_after_unknown_bought_scan_stocks_one_package(client):
+    """Naming an unknown barcode in the review popup completes the original
+    BOUGHT scan: the item starts at one package, not zero."""
+    code = "4066600000005"
+    assert client.post("/api/scan/purchase", json={"barcode": code}).status_code == 404
+    item = client.post("/api/barcode/assign", json={
+        "barcode": code, "item_name": "Scanfix Gekauft"}).json()
+    assert item["quantity"] == 1.0  # one package, straight from the scan
+    assert item["packageCount"] == 1
+    client.delete(f"/api/items/{item['id']}")
+
+
+def test_assign_after_unknown_consume_scan_stocks_nothing(client):
+    """Consume-mode unknown scans open the review queue too, but naming one
+    never stocks a package — it was used up, not bought."""
+    code = "4066600000006"
+    assert client.post("/api/scan/barcode", json={"barcode": code}).status_code == 404
+    entries = client.get("/api/barcode/pending").json()["barcodes"]
+    assert code in {e["barcode"] for e in entries}
+    item = client.post("/api/barcode/assign", json={
+        "barcode": code, "item_name": "Scanfix Nicht Gekauft"}).json()
+    assert item["quantity"] == 0
+    codes = {e["barcode"] for e in client.get("/api/barcode/pending").json()["barcodes"]}
+    assert code not in codes
+    client.delete(f"/api/items/{item['id']}")
