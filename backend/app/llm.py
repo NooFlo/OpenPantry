@@ -30,7 +30,9 @@ def local_models() -> list[str]:
 
 
 def generate_json(prompt: str, choice: dict | None = None, cloud: dict | None = None) -> dict | list | None:
-    choice = choice or {"provider": "local", "model": OLLAMA_MODEL}
+    choice = dict(choice or {"provider": "local", "model": OLLAMA_MODEL})
+    if choice.get("provider") == "disabled":
+        return None  # deterministic-only caller (catalog standardize)
     meta = {"provider": choice["provider"], "model": choice["model"], "prompt_chars": len(prompt)}
     start = time.perf_counter()
     try:

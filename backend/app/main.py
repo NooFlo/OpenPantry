@@ -933,9 +933,12 @@ def standardize_catalog():
         if touched:
             summary["recipesTouched"] += 1
             updated = repo.get_recipe(recipe["id"])
+            # deterministic relink only: provider "disabled" makes every
+            # LLM call short-circuit; word-boundary spans still apply
             links = extract.link_ingredients_in_steps(updated["steps"],
                                                       updated["ingredients"],
-                                                      None, None)
+                                                      {"provider": "disabled",
+                                                       "model": "none"}, None)
             repo.set_step_ingredient_links(recipe["id"], links)
     telemetry.set_meta(**summary)
     trace.finish("ok")
