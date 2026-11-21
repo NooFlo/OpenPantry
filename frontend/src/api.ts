@@ -1,4 +1,4 @@
-import type { Item, ItemPatch, ModelList, PlanShoppingEntry, Receipt, Recipe, RecipeEditPatch, Settings, SettingsPatch, ShoppingListEntry, WeekPlan } from "./types";
+import type { Item, ItemPatch, ModelList, PendingBarcode, PlanShoppingEntry, Receipt, Recipe, RecipeEditPatch, Settings, SettingsPatch, ShoppingListEntry, WeekPlan } from "./types";
 
 const BASE = "/api";
 
@@ -221,4 +221,15 @@ export function pushShoppingList(): Promise<{ pushed: boolean }> {
 
 export function fetchModels(): Promise<ModelList> {
   return request<ModelList>("/models");
+}
+
+export function fetchPendingBarcodes(): Promise<PendingBarcode[]> {
+  return request<{ barcodes: PendingBarcode[] }>("/barcode/pending").then((body) => body.barcodes);
+}
+
+export function assignBarcode(barcode: string, target: { itemId?: string; itemName?: string }): Promise<Item> {
+  return request<Item>("/barcode/assign", {
+    method: "POST",
+    body: JSON.stringify({ barcode, item_id: target.itemId, item_name: target.itemName }),
+  });
 }

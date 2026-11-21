@@ -194,3 +194,14 @@ export interface ModelList {
   local: string[];
   llmAvailable: boolean;
 }
+
+export interface PendingBarcode {
+  barcode: string;
+  name: string;
+  brand?: string | null;
+  quantity?: string | null;
+  categories?: string[];
+  imageUrl?: string | null;
+  source?: string;
+  suggestions: { id: string; name: string; reason: string }[];
+}

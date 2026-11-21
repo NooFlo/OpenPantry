@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import type { Item, ItemPatch, ModelList, Recipe, RecipeEditPatch, Receipt, Settings, SettingsPatch, ShoppingListEntry, Tab } from "./types";
+import type { Item, ItemPatch, ModelList, PendingBarcode, Recipe, RecipeEditPatch, Receipt, Settings, SettingsPatch, ShoppingListEntry, Tab } from "./types";
 import {
   addMissingToShoppingList,
   addToShoppingList,
@@ -8,8 +8,10 @@ import {
   deleteItem,
   deleteRecipe,
   editRecipe,
+  assignBarcode,
   fetchItems,
   fetchModels,
+  fetchPendingBarcodes,
   fetchReceipts,
   fetchRecipes,
   fetchSettings,
@@ -26,6 +28,7 @@ import {
   updateSettings,
 } from "./api";
 import TabBar from "./components/TabBar";
+import ReviewSheet from "./components/ReviewSheet";
 import Sidebar from "./components/Sidebar";
 import HomeScreen from "./screens/HomeScreen";
 import InventoryScreen from "./screens/InventoryScreen";
@@ -62,6 +65,8 @@ export default function App() {
   const [shoppingList, setShoppingList] = useState<ShoppingListEntry[]>([]);
   const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS);
   const [models, setModels] = useState<ModelList>({ local: [], llmAvailable: false });
+  const [pending, setPending] = useState<PendingBarcode[]>([]);
+  const [reviewOpen, setReviewOpen] = useState(false);
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -71,6 +76,53 @@ export default function App() {
   useEffect(() => {
     if (!settings.planningEnabled && tab === "plan") setTab("home");
   }, [settings.planningEnabled, tab]);
+
+  useEffect(() => {
+    // scanned barcodes without an item mapping: poll the review queue and pop
+    // the review sheet whenever a not-yet-dismissed scan lands
+    const tick = () => {
+      fetchPendingBarcodes()
+        .then((entries) => {
+          setPending(entries);
+          try {
+            const dismissed = new Set(JSON.parse(localStorage.getItem("openpantry.dismissed-barcodes") ?? "[]"));
+            const fresh = entries.some((e) => !dismissed.has(e.barcode));
+            if (fresh) setReviewOpen(true);
+          } catch { /* ignore */ }
+        })
+        .catch(() => { /* backend briefly away */ });
+    };
+    tick();
+    const timer = window.setInterval(tick, 2500);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  const dismissBarcode = (barcode: string) => {
+    setPending((prev) => prev.filter((e) => e.barcode !== barcode));
+    try {
+      const dismissed = new Set(JSON.parse(localStorage.getItem("openpantry.dismissed-barcodes") ?? "[]"));
+      dismissed.add(barcode);
+      localStorage.setItem("openpantry.dismissed-barcodes", JSON.stringify([...dismissed]));
+    } catch { /* ignore */ }
+  };
+
+  const closeReview = () => {
+    // closing means "later" for everything currently shown
+    pending.forEach((e) => {
+      try {
+        const dismissed = new Set(JSON.parse(localStorage.getItem("openpantry.dismissed-barcodes") ?? "[]"));
+        dismissed.add(e.barcode);
+        localStorage.setItem("openpantry.dismissed-barcodes", JSON.stringify([...dismissed]));
+      } catch { /* ignore */ }
+    });
+    setReviewOpen(false);
+  };
+
+  const reviewAssign = async (barcode: string, target: { itemId?: string; itemName?: string }) => {
+    const item: Item = await assignBarcode(barcode, target);
+    setItems((prev) => (prev.some((i) => i.id === item.id) ? prev.map((i) => (i.id === item.id ? item : i)) : [...prev, item]));
+    setPending((prev) => prev.filter((e) => e.barcode !== barcode));
+  };
 
   useEffect(() => {
     fetchItems().then(setItems);
@@ -295,6 +347,15 @@ export default function App() {
         )}
       </main>
       <TabBar active={tab} onChange={setTab} planningEnabled={settings.planningEnabled} />
+
+      {reviewOpen && (
+        <ReviewSheet
+          entries={pending}
+          onAssign={reviewAssign}
+          onDismiss={dismissBarcode}
+          onClose={closeReview}
+        />
+      )}
     </div>
   );
 }
