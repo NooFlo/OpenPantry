@@ -11,6 +11,9 @@ export interface Item {
   unit: Unit;
   minQuantity: number;
   packageSize: number;
+  /** How much you buy per purchase (overrides package size on the shopping
+   *  list). null = same as one package. */
+  buyAmount?: number | null;
   barcode?: string;
   /** All product barcodes that hit this item; `barcode` is the primary. */
   barcodes?: string[];
@@ -24,6 +27,7 @@ export interface Item {
 export interface ItemPatch {
   min_quantity?: number;
   package_size?: number;
+  buy_amount?: number;
   tracking_mode?: TrackingMode;
   barcode?: string;
 }

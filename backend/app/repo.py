@@ -182,10 +182,13 @@ _UNSET = object()
 def update_item(item_id: str, min_quantity: float | None = None,
                 package_size: float | None = None,
                 tracking_mode: str | None = None,
+                buy_amount: float | None = None,
                 barcode: object = _UNSET) -> dict | None:
     with get_db() as db:
         if min_quantity is not None:
             db.execute("UPDATE items SET min_quantity = ? WHERE id = ?", (min_quantity, item_id))
+        if buy_amount is not None:
+            db.execute("UPDATE items SET buy_amount = ? WHERE id = ?", (buy_amount, item_id))
         if package_size is not None:
             db.execute("UPDATE items SET package_size = ? WHERE id = ?", (package_size, item_id))
         if tracking_mode is not None:
@@ -209,7 +212,7 @@ def _ensure_on_shopping_list(db, item: dict) -> None:
     row = db.execute("SELECT 1 FROM shopping_list WHERE item_id = ?", (item["id"],)).fetchone()
     if row:
         return
-    add = item["package_size"] or 1
+    add = item["buy_amount"] or item["package_size"] or 1
     db.execute(
         "INSERT INTO shopping_list (item_id, name, amount, unit) VALUES (?, ?, ?, ?)",
         (item["id"], item["name"], add, item["unit"]),
@@ -692,6 +695,7 @@ def _match_or_create_item(db, name: str, unit: str | None) -> dict:
         "barcode": None,
         "uncertain": 0,
         "tracking_mode": "binary",
+        "buy_amount": None,
     }
     db.execute(
         "INSERT INTO items (id, name, category, quantity, unit, min_quantity, package_size, barcode, uncertain, tracking_mode)"
@@ -752,7 +756,7 @@ def add_missing_to_shopping_list(recipe: dict, items_by_id: dict, portions: floa
                     continue
                 row = db.execute("SELECT 1 FROM shopping_list WHERE item_id = ?", (item["id"],)).fetchone()
                 if not row:
-                    add = item["package_size"] or 1
+                    add = item["buy_amount"] or item["package_size"] or 1
                     db.execute(
                         "INSERT INTO shopping_list (item_id, name, amount, unit) VALUES (?, ?, ?, ?)",
                         (item["id"], item["name"], add, item["unit"]),

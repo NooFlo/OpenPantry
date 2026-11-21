@@ -76,6 +76,7 @@ class ItemUpdateRequest(BaseModel):
     min_quantity: float | None = None
     package_size: float | None = None
     tracking_mode: str | None = None
+    buy_amount: float | None = None
     barcode: str | None = None
 
 
@@ -492,6 +493,8 @@ def update_item(item_id: str, body: ItemUpdateRequest):
         raise HTTPException(400, "min_quantity must be >= 0")
     if body.package_size is not None and body.package_size <= 0:
         raise HTTPException(400, "package_size must be > 0")
+    if body.buy_amount is not None and body.buy_amount <= 0:
+        raise HTTPException(400, "buy_amount must be > 0")
     if body.tracking_mode is not None and body.tracking_mode not in ("binary", "qty"):
         raise HTTPException(400, "tracking_mode must be 'binary' or 'qty'")
     new_barcode = None
@@ -506,7 +509,8 @@ def update_item(item_id: str, body: ItemUpdateRequest):
             new_barcode = cleaned
         # an empty barcode clears the mapping
     item = repo.update_item(item_id, body.min_quantity, body.package_size,
-                            body.tracking_mode, barcode=new_barcode)
+                            body.tracking_mode, buy_amount=body.buy_amount,
+                            barcode=new_barcode)
     if not item:
         raise HTTPException(404, "item not found")
     return camelize(item)

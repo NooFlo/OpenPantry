@@ -1053,3 +1053,18 @@ def test_scan_purchase_creates_qty_item(client, monkeypatch):
     assert item["quantity"] == 2.25  # 3 packages of 0.75 l, exact on record
     assert item["packageCount"] == 3
     client.delete(f"/api/items/{item['id']}")
+
+
+def test_buy_amount_overrides_package_size_on_shopping_list(client):
+    """Package size is what a scan adds; buy amount is what a purchase adds
+    to the shopping list — two independent numbers."""
+    item = repo.create_item(name="Scanfix Kaufen", unit="l", package_size=0.5)
+    iid = item["id"]
+    resp = client.post(f"/api/items/{iid}/update", json={"buy_amount": 2.0, "min_quantity": 1.0})
+    assert resp.status_code == 200
+    assert resp.json()["buyAmount"] == 2.0
+    client.post(f"/api/items/{iid}/consume", json={"amount": 5})  # stock collapses below the alarm
+    entries = client.get("/api/shopping-list").json()
+    entry = next(e for e in entries if e.get("itemId") == iid)
+    assert entry["amount"] == 2.0  # the buy amount, not the 0.5 l package
+    client.delete(f"/api/items/{iid}")

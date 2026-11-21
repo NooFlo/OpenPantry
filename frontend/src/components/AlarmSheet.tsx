@@ -39,9 +39,15 @@ export function ItemSettings({ item, onUpdate, onAddBarcode, onRemoveBarcode }: 
     onUpdate(item.id, { min_quantity: next });
   };
 
-  const stepBuy = (direction: -1 | 1) => {
+  const stepPackage = (direction: -1 | 1) => {
     const next = Math.max(minBuy, round(item.packageSize + direction * step));
     onUpdate(item.id, { package_size: next });
+  };
+
+  const buyValue = item.buyAmount ?? item.packageSize;
+  const stepBuy = (direction: -1 | 1) => {
+    const next = Math.max(minBuy, round(buyValue + direction * step));
+    onUpdate(item.id, { buy_amount: next });
   };
 
   return (
@@ -78,14 +84,28 @@ export function ItemSettings({ item, onUpdate, onAddBarcode, onRemoveBarcode }: 
       )}
 
       <StepperRow
-        label="Minimum buying quantity"
-        hint="Shopping-list amount only; quick +/− steps by one"
+        label="Package size"
+        hint={binary
+          ? undefined
+          : "The size of one package — each scan adds or removes one of these"}
         value={item.packageSize}
         unit={item.unit}
         active
         min={minBuy}
-        onStep={stepBuy}
+        onStep={stepPackage}
       />
+
+      {!binary && (
+        <StepperRow
+          label="Buy quantity"
+          hint="How much you buy per purchase — the amount added to the shopping list"
+          value={buyValue}
+          unit={item.unit}
+          active
+          min={minBuy}
+          onStep={stepBuy}
+        />
+      )}
 
       <div>
         <p className="sheet-sub">
