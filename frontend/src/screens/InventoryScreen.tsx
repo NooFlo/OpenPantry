@@ -14,6 +14,7 @@ import ModelSettingsSheet from "../components/ModelSettingsSheet";
 import BarcodesView from "../components/BarcodesView";
 import LabelEditor, { type LabelEditorTarget } from "../components/LabelEditor";
 import AddItemSheet from "../components/AddItemSheet";
+import EditableName from "../components/EditableName";
 import ScanLogSheet from "../components/ScanLogSheet";
 import NfcLinkBlock from "../components/NfcLinkBlock";
 import ReceiptsView from "./ReceiptsView";
@@ -38,6 +39,8 @@ interface InventoryScreenProps {
   onDelete: (id: string) => void;
   onMatchItem: (receiptId: string, itemId: string, productName: string) => void;
   onUpdateItem: (id: string, patch: ItemPatch) => void;
+  /** Rename an item; rejects (e.g. 409 taken) with the reason. */
+  onRenameItem: (id: string, name: string) => Promise<void>;
   onAddItem: (payload: ItemCreatePayload) => Promise<void>;
   onAddItemBarcode: (id: string, barcode: string) => void;
   onRemoveItemBarcode: (id: string, barcode: string) => void;
@@ -50,7 +53,7 @@ interface InventoryScreenProps {
   onOpenReview: () => void;
 }
 
-export default function InventoryScreen({ items, receipts, onConsume, onRestock, onDelete, onMatchItem, onUpdateItem, onAddItem, onAddItemBarcode, onRemoveItemBarcode, settings, models, onSaveSettings, theme, onToggleTheme, scanLog, onOpenReview }: InventoryScreenProps) {
+export default function InventoryScreen({ items, receipts, onConsume, onRestock, onDelete, onMatchItem, onUpdateItem, onRenameItem, onAddItem, onAddItemBarcode, onRemoveItemBarcode, settings, models, onSaveSettings, theme, onToggleTheme, scanLog, onOpenReview }: InventoryScreenProps) {
   const [query, setQuery] = useState("");
   const [category, setCategory] = useState<string | null>(null);
   const [selected, setSelected] = useState<Item | null>(null);
@@ -190,7 +193,12 @@ export default function InventoryScreen({ items, receipts, onConsume, onRestock,
     <>
       {twoPane ? (
         <div>
-          <h2 className="sheet-title">{selectedLive.name}</h2>
+          <h2 className="sheet-title">
+            <EditableName
+              name={selectedLive.name}
+              onRename={(name) => onRenameItem(selectedLive.id, name)}
+            />
+          </h2>
           <p className="sheet-sub">
             {selectedLive.category}
             {eanLine(selectedLive)}
@@ -429,6 +437,7 @@ export default function InventoryScreen({ items, receipts, onConsume, onRestock,
           onEditCustomLabel={editItemLabel}
           onClose={() => setAlarmsOpen(false)}
           categories={categorySuggestions}
+          onRename={(name) => onRenameItem(selectedLive.id, name)}
         />
       )}
 

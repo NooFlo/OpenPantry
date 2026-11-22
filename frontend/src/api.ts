@@ -7,7 +7,10 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
     headers: { "Content-Type": "application/json" },
     ...options,
   });
-  if (!response.ok) throw new Error(`${options?.method ?? "GET"} ${path} -> ${response.status}`);
+  if (!response.ok) {
+    const detail = await response.json().catch(() => null);
+    throw new Error(detail?.detail ?? `${options?.method ?? "GET"} ${path} -> ${response.status}`);
+  }
   return response.json();
 }
 

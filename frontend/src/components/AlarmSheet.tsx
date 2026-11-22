@@ -3,6 +3,7 @@ import type { Item, ItemPatch } from "../types";
 import { CANONICAL_CATEGORIES } from "../types";
 import { resolveConcept } from "../api";
 import Autocomplete from "./Autocomplete";
+import EditableName from "./EditableName";
 import Sheet from "./Sheet";
 import StepperRow, { stepSize } from "./StepperRow";
 import { IconBarcode, IconPlus, IconTag, IconX } from "./Icons";
@@ -356,14 +357,25 @@ interface AlarmSheetProps {
   onClose: () => void;
   /** Categories already in use — autocomplete suggestions. */
   categories?: string[];
+  /** Rename the item; rejects with the reason on failure. */
+  onRename?: (name: string) => Promise<void>;
 }
 
 export default function AlarmSheet({ item, onUpdate, onAddBarcode, onRemoveBarcode,
                                      hasCustomLabel, onToggleCustomLabel, onEditCustomLabel,
-                                     onClose, categories }: AlarmSheetProps) {
+                                     onClose, categories, onRename }: AlarmSheetProps) {
   return (
     <Sheet nested onClose={onClose}>
-      <h2 className="sheet-title">{item.name}</h2>
+      <h2 className="sheet-title">
+        {onRename ? (
+          <EditableName
+            name={item.name}
+            onRename={onRename}
+          />
+        ) : (
+          item.name
+        )}
+      </h2>
       <p className="sheet-sub">Tracking, alarm &amp; buying quantity</p>
       <ItemSettings item={item} onUpdate={onUpdate} onAddBarcode={onAddBarcode}
                     onRemoveBarcode={onRemoveBarcode} categories={categories ?? CANONICAL_CATEGORIES}

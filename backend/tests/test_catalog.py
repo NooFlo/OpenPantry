@@ -348,6 +348,23 @@ def test_catalog_search(client):
     assert len(client.get("/api/catalog/search", params={"q": "e"}).json()["results"]) <= 8
 
 
+def test_rename_item_via_update(client):
+    """Renaming through the update endpoint: works, rejects empty names
+    and case-insensitive duplicates with 409."""
+    response = client.post("/api/items", json={"name": "RenameMich Bio", "quantity": 0})
+    assert response.status_code == 200
+    item = response.json()
+    renamed = client.post(f"/api/items/{item['id']}/update", json={"name": "Pommes Bio"})
+    assert renamed.status_code == 200
+    assert renamed.json()["name"] == "Pommes Bio"
+    # duplicate: the seeded "Salz" collides case-insensitively
+    clash = client.post(f"/api/items/{item['id']}/update", json={"name": "salz"})
+    assert clash.status_code == 409
+    # empty names never pass
+    assert client.post(f"/api/items/{item['id']}/update", json={"name": "   "}).status_code == 409
+    client.delete(f"/api/items/{item['id']}")
+
+
 def test_manual_create_without_category_uses_family(client):
     response = client.post("/api/items", json={"name": "Gochujang"})
     assert response.status_code == 200

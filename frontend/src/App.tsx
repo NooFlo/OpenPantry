@@ -198,6 +198,17 @@ export default function App() {
       .catch(console.error);
   };
 
+  const renameItem = async (id: string, name: string) => {
+    // optimistic rename; a rejection (e.g. 409 name taken) restores the truth
+    setItems((prev) => prev.map((i) => (i.id === id ? { ...i, name } : i)));
+    try {
+      mergeItem(await updateItem(id, { name } as ItemPatch));
+    } catch (error) {
+      fetchItems().then(setItems).catch(console.error);
+      throw error;
+    }
+  };
+
   const onAddItem = async (payload: ItemCreatePayload) => {
     const created = await createItem(payload);
     setItems((prev) => [...prev, created].sort((a, b) => a.name.localeCompare(b.name)));
@@ -338,6 +349,7 @@ export default function App() {
             onDelete={removeItem}
             onMatchItem={matchReceiptItem}
             onUpdateItem={changeItemThresholds}
+            onRenameItem={renameItem}
             onAddItem={onAddItem}
             onAddItemBarcode={onAddItemBarcode}
             onRemoveItemBarcode={onRemoveItemBarcode}
