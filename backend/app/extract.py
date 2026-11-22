@@ -107,6 +107,31 @@ PREP_HINT_RE = re.compile(
 )
 
 
+# Sizes measured on the food itself stick to the name when the amount parser
+# can't split them ("2.5cm piece fresh ginger"). The number is a quantity.
+SIZE_PREFIX_RE = re.compile(
+    r"^\s*(\d+(?:[.,]\d+)?)\s*(cm|mm|zoll|inch(?:es)?)\b\s*"
+    r"(?:pcs?|pieces?|st\u00fcck(?:e|en)?|scheibe(?:n)?|slices?|sticks?|knob)?\s*[-\u2013]?\s*",
+    re.IGNORECASE,
+)
+
+
+def split_size_prefix(name: str) -> tuple[float | None, str | None, str]:
+    """Pull a size prefix out of an ingredient name; the size is a quantity
+    that belongs to the amount, not the name.
+
+    "2.5cm piece fresh ginger" -> (2.5, "cm", "fresh ginger");
+    "3 tbsp olive oil" parses to (None, None, input) — measure amounts
+    belong to the amount parser, not here. Unchanged when nothing applies."""
+    m = SIZE_PREFIX_RE.match(name or "")
+    if not m:
+        return None, None, name or ""
+    rest = name[m.end():].strip()
+    if not rest:
+        return None, None, name
+    return float(m.group(1).replace(",", ".")), m.group(2).lower(), rest
+
+
 def base_ingredient_name(name: str) -> str:
     """Reduce a post-processed ingredient description to the raw grocery item.
 

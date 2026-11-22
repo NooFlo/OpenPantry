@@ -831,10 +831,11 @@ def merge_ingredient_rows(updates: list[dict]) -> int:
     with get_db() as db:
         for u in updates:
             db.execute(
-                "UPDATE ingredients SET raw = ?, item_id = ?, concept_id = ?,"
+                "UPDATE ingredients SET raw = ?, amount = ?, unit = ?,"
+                " item_id = ?, concept_id = ?,"
                 " suggestion = NULL, substitute_kind = NULL, substitute_note = NULL,"
                 " tracked = 1 WHERE id = ? AND recipe_id = ?",
-                (u["raw"], u["item_id"], u["concept_id"],
+                (u["raw"], u["amount"], u["unit"], u["item_id"], u["concept_id"],
                  u["ingredient_id"], u["recipe_id"]))
     return len(updates)
 

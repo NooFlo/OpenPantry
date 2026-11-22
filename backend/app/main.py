@@ -124,6 +124,9 @@ class IngredientMatchRequest(BaseModel):
 class MissingMergeRequest(BaseModel):
     key: str
     item_id: str
+    # what the merged rows should be called in the recipes ("fresh ginger");
+    # falls back to the item name when absent
+    name: str | None = None
 
 
 class RecipeEditIngredientRequest(BaseModel):
@@ -722,6 +725,9 @@ def _rematch_unconfirmed(recipe: dict, ctx: dict) -> dict:
         parsed = extract.parse_ingredient_line(raw)
         name = (extract.base_ingredient_name((parsed or {}).get("name") or raw)
                 or raw)
+        # sizes stuck to the name ("2.5cm piece fresh ginger") resolve like
+        # the plain food; the size only surfaces as a quantity on merge
+        _, _, name = extract.split_size_prefix(name)
         fresh = _ingredient_entry(
             {"name": name, "raw": raw, "amount": ing.get("amount"),
              "unit": ing.get("unit")}, {}, ctx["items"], ctx)
@@ -822,6 +828,10 @@ def _ingredient_entry(ing: dict, canon: dict[str, str], items: list | None = Non
     name = (canon.get(name, name) or name).strip()
     if catalog.junk_class(name):
         return None
+    # sizes stuck to the name ("2.5cm piece fresh ginger") are quantities:
+    # resolve the plain food, the raw keeps its wording until a merge
+    # lifts the size into the amount column
+    _, _, name = extract.split_size_prefix(name)
     entry = {"raw": ing["raw"], "amount": ing.get("amount"), "unit": ing.get("unit"),
              "tracked": True, "suggestion": None}
     if ing.get("alt_group"):
@@ -973,6 +983,9 @@ def _missing_ingredient_groups() -> dict[str, dict]:
             parsed = extract.parse_ingredient_line(raw)
             name = (extract.base_ingredient_name((parsed or {}).get("name") or raw)
                     or raw).strip()
+            # "2.5cm piece fresh ginger" groups and reads as "fresh ginger";
+            # the size is a quantity and shows up on the rows instead
+            _, _, name = extract.split_size_prefix(name)
             concept_id = ing.get("concept_id")
             key = f"concept:{concept_id}" if concept_id else f"name:{catalog._norm(name)}"
             g = groups.setdefault(key, {
@@ -1004,21 +1017,32 @@ def _missing_groups_payload(groups: dict[str, dict]) -> list[dict]:
     return out
 
 
-def _rewritten_raw(raw: str, item_name: str, amount, unit) -> str:
-    """Retext one ingredient line onto the merged item, keeping amounts and
-    preparation notes ("250 g Trockenhefe, aufgelöst" -> "250 g Hefe,
-    aufgelöst"). Fallback to a freshly composed line when the base name
-    cannot be located in the raw text."""
+def _merge_row_update(raw: str, target_name: str, amount, unit) -> tuple[str, object, str | None]:
+    """One merged row's post-merge state: retexted onto the target food,
+    keeping amounts and preparation notes, and with any size that was stuck
+    to the name ("2.5cm piece fresh ginger") lifted out into the quantity
+    so it multiplies with the portions setting."""
     parsed = extract.parse_ingredient_line(raw)
     base = ((extract.base_ingredient_name((parsed or {}).get("name") or raw) or raw)
             or "").strip()
+    size_amount, size_unit, cleaned = extract.split_size_prefix(base)
+    # size in the name and no parsed amount of its own: the size IS the
+    # amount now ("2.5 cm fresh ginger, finely grated")
+    if amount is None and size_amount is not None:
+        suffix = ""
+        if cleaned and cleaned.lower() in raw.lower():
+            idx = raw.lower().index(cleaned.lower())
+            suffix = raw[idx + len(cleaned):]
+        return (f"{size_amount:g} {size_unit} {target_name}{suffix}".strip(),
+                size_amount, size_unit)
     if base:
         idx = raw.lower().find(base.lower())
         if idx >= 0:
-            return (raw[:idx] + item_name + raw[idx + len(base):]).strip()
+            return (raw[:idx] + target_name + raw[idx + len(base):]).strip(), amount, unit
     if amount is not None:
-        return f"{amount:g} {unit or ''} {item_name}".replace("  ", " ").strip()
-    return item_name
+        return (f"{amount:g} {unit or ''} {target_name}".replace("  ", " ").strip(),
+                amount, unit)
+    return target_name, amount, unit
 
 
 @app.get("/api/recipes/missing-items")
@@ -1044,11 +1068,14 @@ def merge_missing_item(body: MissingMergeRequest):
     if not concept_id and group["concept_id"]:
         repo.set_item_concept(item["id"], group["concept_id"])
         concept_id = group["concept_id"]
+    target_name = (body.name or "").strip() or item["name"]
     updates = []
     for row in group["rows"]:
+        raw, amount, unit = _merge_row_update(
+            row["raw"], target_name, row["amount"], row["unit"])
         updates.append({
             "recipe_id": row["recipe_id"], "ingredient_id": row["ingredient_id"],
-            "raw": _rewritten_raw(row["raw"], item["name"], row["amount"], row["unit"]),
+            "raw": raw, "amount": amount, "unit": unit,
             "item_id": item["id"], "concept_id": concept_id})
     repo.merge_ingredient_rows(updates)
     return camelize({

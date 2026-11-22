@@ -371,3 +371,16 @@ def test_llm_recipe_repairs_unit_only_ingredient_names(monkeypatch):
     assert by_name["Basmatireis"]["amount"] == 0.25
     assert by_name["Basmatireis"]["unit"] == "kg"
     assert by_name["Zwiebeln"]["amount"] == 2
+
+
+def test_split_size_prefix():
+    from app.extract import split_size_prefix
+    assert split_size_prefix("2.5cm piece fresh ginger") == (2.5, "cm", "fresh ginger")
+    assert split_size_prefix("1 inch piece ginger") == (1.0, "inch", "ginger")
+    assert split_size_prefix("3 cm Ingwer, gerieben") == (3.0, "cm", "Ingwer, gerieben")
+    assert split_size_prefix("2 zoll Ingwer") == (2.0, "zoll", "Ingwer")
+    # measure amounts are the amount parser's job, not sizes stuck to names
+    assert split_size_prefix("3 tbsp olive oil") == (None, None, "3 tbsp olive oil")
+    assert split_size_prefix("fresh ginger") == (None, None, "fresh ginger")
+    # a size with nothing after it is not a prefix
+    assert split_size_prefix("2 inch") == (None, None, "2 inch")

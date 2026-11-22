@@ -10,8 +10,9 @@ interface MissingItemsSheetProps {
   items: Item[];
   /** Categories already in use — autocomplete suggestions in the item sheet. */
   categories: string[];
-  /** Merge one missing-food group onto an existing inventory item. */
-  onMerge: (key: string, itemId: string) => Promise<void>;
+  /** Merge one missing-food group onto an existing inventory item; the
+   *  name (when given) is what the recipe rows should read as. */
+  onMerge: (key: string, itemId: string, name?: string) => Promise<void>;
   /** Create a new inventory item and merge the group onto it. */
   onCreateAndMerge: (key: string, payload: ItemCreatePayload) => Promise<void>;
   onClose: () => void;
@@ -29,6 +30,7 @@ export default function MissingItemsSheet({ items, categories, onMerge, onCreate
   const [busy, setBusy] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+  const [rename, setRename] = useState("");
 
   const reload = () => {
     setError(null);
@@ -43,6 +45,11 @@ export default function MissingItemsSheet({ items, categories, onMerge, onCreate
 
   useEffect(reload, []);
 
+  // the name edits travel with the selected group
+  useEffect(() => {
+    setRename(selected?.name ?? "");
+  }, [selected?.key, selected?.name]);
+
   const itemSuggestions = useMemo(() => {
     const q = query.trim().toLowerCase();
     return items
@@ -56,7 +63,7 @@ export default function MissingItemsSheet({ items, categories, onMerge, onCreate
     setBusy(true);
     setError(null);
     try {
-      await onMerge(selected.key, itemId);
+      await onMerge(selected.key, itemId, rename.trim() || undefined);
       const item = items.find((i) => i.id === itemId);
       setNotice(`Merged into ${item?.name ?? "the item"} — ${selected.recipes.length > 1 ? `${selected.recipes.length} recipes use it now` : "the recipe uses it now"}.`);
       setSelected(null);
@@ -142,8 +149,19 @@ export default function MissingItemsSheet({ items, categories, onMerge, onCreate
             ‹
           </button>
           <h2 className="sheet-title">{selected.name}</h2>
-          <p className="sheet-sub">
-            Raw lines like “{selected.sampleRaw}” — used in {recipesLine(selected).toLowerCase()}:
+          <p className="sheet-sub" style={{ marginBottom: 6 }}>
+            Name it the way the recipes should read it — sizes like “2.5cm piece”
+            become the quantity and scale with the portions.
+          </p>
+          <input
+            className="import-input"
+            value={rename}
+            placeholder={selected.name}
+            onChange={(e) => setRename(e.target.value)}
+            aria-label="Ingredient name in recipes"
+          />
+          <p className="sheet-sub" style={{ marginTop: 14, marginBottom: 8 }}>
+            Raw line like “{selected.sampleRaw}” — used in {recipesLine(selected).toLowerCase()}:
           </p>
           <div className="chip-row" style={{ flexWrap: "wrap", margin: "6px 0 14px" }}>
             {selected.recipes.map((r) => (
@@ -183,7 +201,7 @@ export default function MissingItemsSheet({ items, categories, onMerge, onCreate
           onAddItem={createAndMerge}
           onClose={() => setCreateOpen(false)}
           categories={categories}
-          initialName={selected.name}
+          initialName={rename.trim() || selected.name}
           initialConcept={selected.conceptId && selected.conceptLabel ? { id: selected.conceptId, label: selected.conceptLabel } : null}
         />
       )}

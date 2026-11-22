@@ -301,8 +301,8 @@ export default function App() {
 
   /** Settings > Missing items, merge: relink all rows of one food group
    *  onto an inventory item, then pull the fresh recipes + items. */
-  const mergeMissing = async (key: string, itemId: string) => {
-    await mergeMissingGroup(key, itemId);
+  const mergeMissing = async (key: string, itemId: string, name?: string) => {
+    await mergeMissingGroup(key, itemId, name);
     const [updatedItems, updatedRecipes] = await Promise.all([fetchItems(), fetchRecipes()]);
     setItems(updatedItems);
     setRecipes(updatedRecipes);
@@ -312,7 +312,9 @@ export default function App() {
   const createAndMergeMissing = async (key: string, payload: ItemCreatePayload) => {
     const created = await createItem(payload);
     setItems((prev) => [...prev, created]);
-    await mergeMissing(key, created.id);
+    // the food name the user settled on in the sheet is what the recipe
+    // rows should read as — not necessarily the item's display name
+    await mergeMissing(key, created.id, payload.name);
   };
 
   const saveRecipeEdit = (recipeId: string, patch: RecipeEditPatch) =>

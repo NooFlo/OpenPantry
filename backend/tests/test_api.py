@@ -1220,3 +1220,35 @@ def test_recent_scans_log_names_and_kinds(client):
     assert all(e["itemName"] == "Scanfix Log" for e in mine)
     assert mine[1]["barcode"] == "2098770000019"
     repo.delete_item(item["id"])
+
+
+def test_missing_items_rename_lifts_size_into_quantity(client):
+    """Renaming a group while merging: the name the user types is what the
+    rows read as, and a size stuck to the name ("2.5cm piece FooGinger")
+    becomes the amount — so it scales with the portions setting."""
+    recipe = repo.create_recipe(
+        "FooSize", "pasted", 2,
+        [{"raw": "2.5cm piece FooGinger, finely grated", "tracked": True}], [])
+    try:
+        groups = client.get("/api/recipes/missing-items").json()
+        group = next(g for g in groups if g["key"] == "name:fooginger")
+        # displayed name is cleaned; the size is not part of it anymore
+        assert group["name"] == "FooGinger"
+        created = client.post(
+            "/api/items", json={"name": "Ingwer Testwurzel", "unit": "pcs"}).json()
+        result = client.post(
+            "/api/recipes/missing-items/merge",
+            json={"key": "name:fooginger", "item_id": created["id"],
+                  "name": "FooGinger"}).json()
+        assert result["updated"] == 1
+        recipe = next(r for r in client.get("/api/recipes").json()
+                      if r["title"] == "FooSize")
+        ing = recipe["ingredients"][0]
+        assert ing["itemId"] == created["id"]
+        # the size became the quantity; the preparation note survives
+        assert ing["raw"] == "2.5 cm FooGinger, finely grated"
+        assert ing["amount"] == 2.5
+        assert ing["unit"] == "cm"
+        client.delete(f"/api/items/{created['id']}")
+    finally:
+        repo.delete_recipe(recipe["id"])

@@ -41,7 +41,7 @@ interface RecipesScreenProps {
   onSaveRecipeEdit: (recipeId: string, patch: RecipeEditPatch) => Promise<unknown>;
   onDeleteRecipe: (recipeId: string) => Promise<unknown>;
   /** Settings > Missing items: merge a group of unmatched rows onto one item. */
-  onMergeMissing: (key: string, itemId: string) => Promise<void>;
+  onMergeMissing: (key: string, itemId: string, name?: string) => Promise<void>;
   /** Settings > Missing items: create the item for a group and link it. */
   onCreateMissingItem: (key: string, payload: ItemCreatePayload) => Promise<void>;
   settings: Settings;

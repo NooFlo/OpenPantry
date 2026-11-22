@@ -113,10 +113,10 @@ export function fetchMissingGroups(): Promise<MissingGroup[]> {
   return request<MissingGroup[]>("/recipes/missing-items");
 }
 
-export function mergeMissingGroup(key: string, itemId: string): Promise<MissingMergeResult> {
+export function mergeMissingGroup(key: string, itemId: string, name?: string): Promise<MissingMergeResult> {
   return request<MissingMergeResult>("/recipes/missing-items/merge", {
     method: "POST",
-    body: JSON.stringify({ key, item_id: itemId }),
+    body: JSON.stringify(name ? { key, item_id: itemId, name } : { key, item_id: itemId }),
   });
 }
 
