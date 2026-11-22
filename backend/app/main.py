@@ -13,7 +13,7 @@ from fastapi.responses import HTMLResponse, PlainTextResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import catalog, extract, hass, labels, mail, planning, products, repo, seed, telemetry
+from . import catalog, extract, hass, labels, mail, planning, products, repo, seed, telemetry, import_rules
 from .config import get_cloud_config, get_model_choice, set_model_choice
 from .db import init_db
 
@@ -894,6 +894,7 @@ def _create_recipe_with_matches(data: dict, choice: dict | None = None, cloud: d
     canon = _canonical_names(data, choice, cloud)
     items = repo.list_items()
     ingredients = [e for e in (_ingredient_entry(ing, canon, items) for ing in data["ingredients"]) if e]
+    ingredients, _rule_notes = import_rules.sanitize(ingredients)
     with telemetry.span("step_links", steps=len(data["steps"])):
         links = extract.link_ingredients_in_steps(data["steps"], ingredients, choice, cloud)
     recipe = repo.create_recipe(data["title"], data["source"], data["base_portions"],
@@ -923,6 +924,7 @@ def refresh_recipe(recipe_id: str):
     canon = _canonical_names(data, choice, cloud)
     items = repo.list_items()
     ingredients = [e for e in (_ingredient_entry(ing, canon, items) for ing in data["ingredients"]) if e]
+    ingredients, _rule_notes = import_rules.sanitize(ingredients)
     with telemetry.span("step_links", steps=len(data["steps"])):
         links = extract.link_ingredients_in_steps(data["steps"], ingredients, choice, cloud)
     result = repo.replace_recipe(recipe_id, data["title"], data["source"],
