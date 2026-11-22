@@ -687,8 +687,20 @@ def test_update_item_tracking_mode(client):
 
 
 def test_binary_consume_empties_and_auto_adds(client):
+    """Emptying a binary item adds it to the shopping list only when its
+    Always-restock box is on; otherwise emptying it stays quiet."""
     item = repo.create_item("Testtee", unit="pcs", package_size=2)
+    assert client.post(f"/api/items/{item['id']}/update",
+                       json={"auto_restock": False}).json()["autoRestock"] is False
     from app.db import get_db
+    with get_db() as db:
+        db.execute("UPDATE items SET quantity = 1 WHERE id = ?", (item["id"],))
+
+    quiet = client.post(f"/api/items/{item['id']}/consume", json={"amount": 0.1}).json()
+    assert quiet["quantity"] == 0
+    assert [e for e in client.get("/api/shopping-list").json() if e["itemId"] == item["id"]] == []
+
+    client.post(f"/api/items/{item['id']}/update", json={"auto_restock": True})
     with get_db() as db:
         db.execute("UPDATE items SET quantity = 1 WHERE id = ?", (item["id"],))
 
@@ -756,9 +768,12 @@ def test_delete_item(client):
 
 
 def test_empty_tag_zeros_stock_and_adds_to_list(client):
+    """An EMPTY-mode scan onto an always-restock item zeroes it and puts it
+    on the shopping list immediately."""
     # a reboxed, quantity-tracked container (like flour) with a tag on it
     item = repo.create_item("Testmehl", unit="kg", package_size=1.5, tracking_mode="qty")
     client.post(f"/api/items/{item['id']}/restock", json={"amount": 3})
+    client.post(f"/api/items/{item['id']}/update", json={"auto_restock": True})
 
     response = client.post(f"/api/items/{item['id']}/empty")
     assert response.status_code == 200 and response.json()["quantity"] == 0

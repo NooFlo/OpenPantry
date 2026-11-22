@@ -67,6 +67,7 @@ def _attach_barcodes(items: list[dict]) -> list[dict]:
         if concept:
             meta = catalog.CONCEPTS.get(concept)
             item["concept_label"] = meta["de"] if meta else None
+        item["auto_restock"] = bool(item.get("auto_restock", 0))
     return items
 
 
@@ -200,6 +201,7 @@ def update_item(item_id: str, min_quantity: float | None = None,
                 package_size: float | None = None,
                 tracking_mode: str | None = None,
                 buy_amount: float | None = None,
+                auto_restock: bool | None = None,
                 barcode: object = _UNSET,
                 name: str | None = None,
                 category: str | None = None,
@@ -228,6 +230,14 @@ def update_item(item_id: str, min_quantity: float | None = None,
             db.execute("UPDATE items SET min_quantity = ? WHERE id = ?", (min_quantity, item_id))
         if buy_amount is not None:
             db.execute("UPDATE items SET buy_amount = ? WHERE id = ?", (buy_amount, item_id))
+        if auto_restock is not None:
+            db.execute("UPDATE items SET auto_restock = ? WHERE id = ?",
+                       (1 if auto_restock else 0, item_id))
+            if auto_restock:
+                # enabling on an already-empty item fills the list right away
+                row = db.execute("SELECT * FROM items WHERE id = ?", (item_id,)).fetchone()
+                if row and _low_crossed(row["quantity"], row["quantity"], dict(row)):
+                    _ensure_on_shopping_list(db, dict(row))
         if package_size is not None:
             db.execute("UPDATE items SET package_size = ? WHERE id = ?", (package_size, item_id))
         if tracking_mode is not None:
@@ -259,9 +269,16 @@ def _ensure_on_shopping_list(db, item: dict) -> None:
 
 
 def _low_crossed(before: float, after: float, item: dict) -> bool:
-    """The stock fell to the alarm level, or ran out entirely."""
+    """Should this change leave the item flagged low — and go on the shopping
+    list? With an alarm set, crossing it counts; hitting zero always counts
+    only when the item restocks automatically. No alarm, no auto-restock:
+    emptying it is a private affair, nothing gets added and the homepage
+    stays quiet."""
     minimum = item["min_quantity"] or 0
-    return (minimum > 0 and before > minimum >= after) or after <= 0
+    always = bool(item.get("auto_restock"))
+    if minimum > 0:
+        return before > minimum >= after or after <= 0
+    return always and after <= 0
 
 
 def _remove_from_shopping_list_if_stocked(db, item: dict) -> None:

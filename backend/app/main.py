@@ -77,6 +77,7 @@ class ItemUpdateRequest(BaseModel):
     package_size: float | None = None
     tracking_mode: str | None = None
     buy_amount: float | None = None
+    auto_restock: bool | None = None
     barcode: str | None = None
     name: str | None = None
     category: str | None = None
@@ -612,6 +613,7 @@ def update_item(item_id: str, body: ItemUpdateRequest):
     try:
         item = repo.update_item(item_id, body.min_quantity, body.package_size,
                                 body.tracking_mode, buy_amount=body.buy_amount,
+                                auto_restock=body.auto_restock,
                                 barcode=new_barcode, name=body.name,
                                 category=body.category, concept_id=new_concept)
     except ValueError as error:
