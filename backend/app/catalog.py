@@ -943,6 +943,15 @@ def resolve_for_stock(name: str, items, stocked: dict | None = None) -> dict:
               "item_id": None, "item_name": None, "note": "",
               "buy_name": None}
     if not concept:
+        # concept unknown: the pantry's own generic names still match —
+        # a stocked item whose generic name equals the cleaned line verbatim
+        want = _norm(cleaned)
+        if want:
+            for item in items:
+                if _norm(item.get("generic_name") or "") == want:
+                    _set("identity", item,
+                         "Gleicher generischer Name im Vorrat")
+                    return result
         return result
     meta = CONCEPTS[concept]
     result["buy_name"] = meta["de"]
@@ -989,6 +998,15 @@ def resolve_for_stock(name: str, items, stocked: dict | None = None) -> dict:
         if entries:
             _set("sibling", _pick(entries), _note(concept, sibling, "sibling"))
             return result
+    # last resort before suggesting a buy: a stocked item that carries the
+    # cleaned line verbatim as its generic name is the same food
+    want = _norm(cleaned)
+    if want:
+        for item in items:
+            if _norm(item.get("generic_name") or "") == want:
+                _set("identity", item,
+                     "Gleicher generischer Name im Vorrat")
+                return result
     parts = BLENDS.get(concept) or []
     if parts:
         have = [p for p in parts if stocked.get(p)]

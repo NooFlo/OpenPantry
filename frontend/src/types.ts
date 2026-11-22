@@ -27,6 +27,9 @@ export interface Item {
   conceptId?: string | null;
   /** Display name of the concept ("Kreuzkümmel", "Zimtstangen"). */
   conceptLabel?: string | null;
+  /** Brand-free generic name ("Basmatireis") — the identity recipes and
+   *  barcode products are matched against; derived, then editable. */
+  genericName?: string | null;
   uncertain?: boolean;
   trackingMode: TrackingMode;
 }
@@ -47,6 +50,8 @@ export interface ItemPatch {
   category?: string;
   /** catalog concept id; "" clears the tag */
   concept_id?: string;
+  /** Brand-free generic name; "" re-derives it from the display name. */
+  generic_name?: string;
 }
 
 /** Manual item creation — everything optional except the name. */

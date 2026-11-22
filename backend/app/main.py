@@ -83,6 +83,7 @@ class ItemUpdateRequest(BaseModel):
     name: str | None = None
     category: str | None = None
     concept_id: str | None = None
+    generic_name: str | None = None
 
 
 class ItemCreateRequest(BaseModel):
@@ -96,6 +97,7 @@ class ItemCreateRequest(BaseModel):
     tracking_mode: str | None = None
     barcode: str | None = None
     concept_id: str | None = None
+    generic_name: str | None = None
 
 
 class ShoppingListRequest(BaseModel):
@@ -594,6 +596,7 @@ def create_item(body: ItemCreateRequest):
             concept_id=concept,
             category_explicit=body.category is not None,
             quantity=quantity,
+            generic_name=body.generic_name,
         )
     except ValueError as error:
         raise HTTPException(409, str(error))
@@ -641,7 +644,9 @@ def update_item(item_id: str, body: ItemUpdateRequest):
                                 body.tracking_mode, buy_amount=body.buy_amount,
                                 auto_restock=body.auto_restock,
                                 barcode=new_barcode, name=body.name,
-                                category=body.category, concept_id=new_concept)
+                                category=body.category, concept_id=new_concept,
+                                generic_name=body.generic_name
+                                if body.generic_name is not None else repo._UNSET)
     except ValueError as error:
         raise HTTPException(409, str(error))
     if not item:

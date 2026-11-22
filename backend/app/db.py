@@ -20,7 +20,8 @@ CREATE TABLE IF NOT EXISTS items (
     uncertain INTEGER NOT NULL DEFAULT 0,
     tracking_mode TEXT NOT NULL DEFAULT 'binary',
     buy_amount REAL,
-    auto_restock INTEGER NOT NULL DEFAULT 0
+    auto_restock INTEGER NOT NULL DEFAULT 0,
+    generic_name TEXT
 );
 
 CREATE TABLE IF NOT EXISTS scan_log (
@@ -77,6 +78,7 @@ CREATE TABLE IF NOT EXISTS ingredients (
     item_id TEXT REFERENCES items(id),
     tracked INTEGER NOT NULL DEFAULT 1,
     suggestion TEXT,
+    generic_name TEXT,
     alt_group TEXT,
     selected INTEGER NOT NULL DEFAULT 0
 );
@@ -199,6 +201,8 @@ def init_db():
         item_columns = {row["name"] for row in db.execute("PRAGMA table_info(items)")}
         if "buy_amount" not in item_columns:
             db.execute("ALTER TABLE items ADD COLUMN buy_amount REAL")
+        if "generic_name" not in item_columns:
+            db.execute("ALTER TABLE items ADD COLUMN generic_name TEXT")
         if "concept_id" not in item_columns:
             db.execute("ALTER TABLE items ADD COLUMN concept_id TEXT")
         if "auto_restock" not in item_columns:
@@ -213,6 +217,8 @@ def init_db():
         columns = {row["name"] for row in db.execute("PRAGMA table_info(ingredients)")}
         if "unit" not in columns:
             db.execute("ALTER TABLE ingredients ADD COLUMN unit TEXT")
+        if "generic_name" not in columns:
+            db.execute("ALTER TABLE ingredients ADD COLUMN generic_name TEXT")
         # concept catalog: every ingredient resolves to a canonical food
         # concept; substitution suggestions carry their kind + a human note
         if "concept_id" not in columns:
@@ -254,4 +260,19 @@ def init_db():
         if "person_id" not in fill_columns:
             db.execute("ALTER TABLE plan_fills ADD COLUMN person_id TEXT")
             db.execute("UPDATE plan_fills SET person_id = NULL")
+
+        # generic-name backfill: every item and ingredient row gains the
+        # brand-free identity the matcher compares against (deterministic;
+        # user-set names are never touched — backfill fills NULLs only)
+        from . import naming
+        for row in db.execute(
+                "SELECT id, name, concept_id FROM items WHERE generic_name IS NULL").fetchall():
+            db.execute("UPDATE items SET generic_name = ? WHERE id = ?",
+                       (naming.auto(row["name"], row["concept_id"]), row["id"]))
+        for row in db.execute(
+                "SELECT id, raw, concept_id FROM ingredients"
+                " WHERE generic_name IS NULL").fetchall():
+            db.execute(
+                "UPDATE ingredients SET generic_name = ? WHERE id = ?",
+                (naming.ingredient_generic_name(row["raw"], row["concept_id"]), row["id"]))
 

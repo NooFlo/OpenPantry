@@ -4,6 +4,7 @@ import re
 import uuid
 
 from . import catalog
+from . import naming
 from .db import get_db
 
 
@@ -253,7 +254,8 @@ def save_control_custom_label(control: str, elements: list[dict],
 def create_item(name: str, category: str = "Pantry", unit: str = "pcs",
                 package_size: float = 1.0, barcode: str | None = None,
                 tracking_mode: str = "binary", concept_id: str | None = None,
-                category_explicit: bool = False, quantity: float = 0.0) -> dict:
+                category_explicit: bool = False, quantity: float = 0.0,
+                generic_name: str | None = None) -> dict:
     item = {
         "id": new_id(),
         "name": name,
@@ -277,10 +279,11 @@ def create_item(name: str, category: str = "Pantry", unit: str = "pcs",
         if not category_explicit:
             item["category"] = catalog.FAMILY_DEFAULT_CATEGORY.get(family, category)
     item["concept_id"] = concept_id
+    item["generic_name"] = (generic_name or "").strip() or naming.auto(name, concept_id)
     with get_db() as db:
         db.execute(
-            "INSERT INTO items (id, name, category, quantity, unit, min_quantity, package_size, barcode, uncertain, tracking_mode, concept_id)"
-            " VALUES (:id, :name, :category, :quantity, :unit, :min_quantity, :package_size, :barcode, :uncertain, :tracking_mode, :concept_id)",
+            "INSERT INTO items (id, name, category, quantity, unit, min_quantity, package_size, barcode, uncertain, tracking_mode, concept_id, generic_name)"
+            " VALUES (:id, :name, :category, :quantity, :unit, :min_quantity, :package_size, :barcode, :uncertain, :tracking_mode, :concept_id, :generic_name)",
             item,
         )
         if barcode:
@@ -316,13 +319,35 @@ def update_item(item_id: str, min_quantity: float | None = None,
                 barcode: object = _UNSET,
                 name: str | None = None,
                 category: str | None = None,
-                concept_id: object = _UNSET) -> dict | None:
+                concept_id: object = _UNSET,
+                generic_name: object = _UNSET) -> dict | None:
+    """Patch an item. The generic name follows renames and concept changes
+    while it is auto-derived; a user-curated one survives until someone
+    explicitly replaces or clears it (empty string = re-derive)."""
     with get_db() as db:
+        old = db.execute("SELECT * FROM items WHERE id = ?", (item_id,)).fetchone()
+        if not old:
+            return None
+        final_name = (name or "").strip() if name is not None else old["name"]
+        final_concept = (concept_id or None) if concept_id is not _UNSET \
+            else old["concept_id"]
+        # follow renames/concept changes only while the stored generic name
+        # is still the auto derivation of what is on record
+        was_auto = (old["generic_name"] or "").strip().lower() == \
+            naming.auto(old["name"], old["concept_id"]).strip().lower()
+        if generic_name is _UNSET:
+            if was_auto:
+                generic_name = naming.auto(final_name, final_concept)
+            else:
+                generic_name = (old["generic_name"] or "").strip()
+        db.execute("UPDATE items SET generic_name = ? WHERE id = ?",
+                   ((generic_name or "").strip() or None, item_id))
         if category is not None:
             category = category.strip()
             if not category:
                 raise ValueError("category must not be empty")
-            db.execute("UPDATE items SET category = ? WHERE id = ?", (category, item_id))
+            db.execute("UPDATE items SET category = ? WHERE id = ?",
+                       (category, item_id))
         if name is not None:
             name = name.strip()
             if not name:
@@ -334,11 +359,12 @@ def update_item(item_id: str, min_quantity: float | None = None,
                 raise ValueError(f"name already used by {clash['name']}")
             db.execute("UPDATE items SET name = ? WHERE id = ?", (name, item_id))
         if concept_id is not _UNSET:
-            # explicit clear ("" / None) or a validated catalog key
+            # explicit clear ("") or a validated catalog key
             db.execute("UPDATE items SET concept_id = ? WHERE id = ?",
                        (concept_id or None, item_id))
         if min_quantity is not None:
-            db.execute("UPDATE items SET min_quantity = ? WHERE id = ?", (min_quantity, item_id))
+            db.execute("UPDATE items SET min_quantity = ? WHERE id = ?",
+                       (min_quantity, item_id))
         if buy_amount is not None:
             db.execute("UPDATE items SET buy_amount = ? WHERE id = ?", (buy_amount, item_id))
         if auto_restock is not None:
@@ -682,14 +708,19 @@ def _steps(steps_json: str) -> list[str]:
 
 def _insert_ingredients(db, recipe_id: str, ingredients: list[dict]):
     for ing in ingredients:
+        generic = (ing.get("generic_name") or "").strip()
+        if not generic:
+            generic = naming.ingredient_generic_name(
+                ing.get("raw") or "", ing.get("concept_id"))
         db.execute(
             "INSERT INTO ingredients (id, recipe_id, raw, amount, unit, item_id, tracked, suggestion,"
-            " alt_group, selected, concept_id, substitute_kind, substitute_note)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            " alt_group, selected, concept_id, substitute_kind, substitute_note, generic_name)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (new_id(), recipe_id, ing.get("raw", ""), ing.get("amount"), ing.get("unit"),
              ing.get("item_id"), 1 if ing.get("tracked", True) else 0, ing.get("suggestion"),
              ing.get("alt_group"), 1 if ing.get("selected") else 0,
-             ing.get("concept_id"), ing.get("substitute_kind"), ing.get("substitute_note")),
+             ing.get("concept_id"), ing.get("substitute_kind"), ing.get("substitute_note"),
+             ing.get("generic_name") or generic.strip()),
         )
 
 

@@ -31,6 +31,16 @@ function eanLine(item: Item) {
   return item.barcode ? ` · ${item.barcode}` : "";
 }
 
+/** The brand-free identity the matcher compares against — shown so the
+ *  derived name is visible (and correctable via the API) at a glance. */
+function genericLine(item: Item) {
+  const generic = (item.genericName || "").trim();
+  if (!generic) return "";
+  const display = generic.toLowerCase();
+  if (item.name.trim().toLowerCase() === display) return "";
+  return ` · Generic: ${generic}`;
+}
+
 interface InventoryScreenProps {
   items: Item[];
   receipts: Receipt[];
@@ -202,6 +212,7 @@ export default function InventoryScreen({ items, receipts, onConsume, onRestock,
           <p className="sheet-sub">
             {selectedLive.category}
             {eanLine(selectedLive)}
+            {genericLine(selectedLive)}
           </p>
         </div>
       ) : (
@@ -211,6 +222,7 @@ export default function InventoryScreen({ items, receipts, onConsume, onRestock,
             <p className="sheet-sub">
               {selectedLive.category}
               {eanLine(selectedLive)}
+              {genericLine(selectedLive)}
             </p>
           </div>
           {alarmsOpen ? <span className="chevron up" aria-hidden /> : <span className="chevron" aria-hidden />}
