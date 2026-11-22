@@ -80,6 +80,8 @@ export default function PlanningScreen({ recipes, theme, onToggleTheme }: Planni
 
   const openFill = (drag: DragPayload, mealId?: string) => setFillSheet({ drag, mealId });
 
+  const favorites = useMemo(() => recipes.filter((r) => r.favorite), [recipes]);
+
   /** Direct drop placement: no sheet. A drop on a person's half targets that
    * person (one portion); a drop on the whole field feeds the meal's persons
    * — or all persons when none are attached yet — one portion each, capped
@@ -189,6 +191,40 @@ export default function PlanningScreen({ recipes, theme, onToggleTheme }: Planni
             </div>
           )}
           <h2 className="section-title">Recipes</h2>
+          <div className="plan-pickers">
+            <select
+              className="plan-select"
+              value=""
+              aria-label="Choose from favorite recipes"
+              onChange={(e) => {
+                if (e.target.value) openFill({ kind: "recipe", id: e.target.value });
+                e.target.value = "";
+              }}
+            >
+              <option value="">★ Favorites…</option>
+              {favorites.map((r) => (
+                <option key={r.id} value={r.id}>
+                  {r.title}
+                </option>
+              ))}
+            </select>
+            <select
+              className="plan-select"
+              value=""
+              aria-label="Choose from all recipes"
+              onChange={(e) => {
+                if (e.target.value) openFill({ kind: "recipe", id: e.target.value });
+                e.target.value = "";
+              }}
+            >
+              <option value="">All recipes…</option>
+              {recipes.map((r) => (
+                <option key={r.id} value={r.id}>
+                  {r.title}
+                </option>
+              ))}
+            </select>
+          </div>
           <div className="plan-menu-list">
             {recipes.map((r) => (
               <div

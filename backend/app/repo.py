@@ -641,6 +641,7 @@ def match_receipt_item(receipt_id: str, item_id: str, product_name: str) -> dict
 def _recipe_out(recipe: dict) -> dict:
     recipe = dict(recipe)
     recipe["tags"] = _tags(recipe.pop("tags_json", None))
+    recipe["favorite"] = bool(recipe.get("favorite"))
     recipe["step_ingredients"] = _step_links(recipe.pop("step_ingredients_json", None),
                                               len(recipe["steps"]))
     recipe.pop("steps_json", None)
@@ -803,6 +804,19 @@ def update_recipe(recipe_id: str, title: str | None = None, source: str | None =
         if ingredients is not None:
             db.execute("DELETE FROM ingredients WHERE recipe_id = ?", (recipe_id,))
             _insert_ingredients(db, recipe_id, ingredients)
+    return get_recipe(recipe_id)
+
+
+def set_recipe_favorite(recipe_id: str, favorite: bool) -> dict | None:
+    """Star / un-star a recipe. Persisted so favorites survive devices."""
+    with get_db() as db:
+        exists = db.execute("SELECT 1 FROM recipes WHERE id = ?", (recipe_id,)).fetchone()
+        if not exists:
+            return None
+        db.execute(
+            "UPDATE recipes SET favorite = ? WHERE id = ?",
+            (1 if favorite else 0, recipe_id),
+        )
     return get_recipe(recipe_id)
 
 

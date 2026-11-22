@@ -30,6 +30,7 @@ import {
   removeItemBarcode,
   restockItem,
   selectRecipeIngredient,
+  setRecipeFavorite,
   updateItem,
   updateSettings,
 } from "./api";
@@ -335,6 +336,18 @@ export default function App() {
       setRecipes((prev) => prev.filter((r) => r.id !== recipeId));
     });
 
+  /** Star / un-star a recipe: optimistic, corrected from the API response. */
+  const toggleRecipeFavorite = (recipeId: string, favorite: boolean) => {
+    setRecipes((prev) => prev.map((r) => (r.id === recipeId ? { ...r, favorite } : r)));
+    setRecipeFavorite(recipeId, favorite)
+      .then((updated) => setRecipes((prev) => prev.map((r) => (r.id === updated.id ? updated : r))))
+      .catch((err: unknown) => {
+        console.error(err);
+        // revert the optimistic flip
+        setRecipes((prev) => prev.map((r) => (r.id === recipeId ? { ...r, favorite: !favorite } : r)));
+      });
+  };
+
   const selectIngredient = (recipeId: string, ingredientId: string) => {
     selectRecipeIngredient(recipeId, ingredientId)
       .then((updated) => setRecipes((prev) => prev.map((r) => (r.id === updated.id ? updated : r))))
@@ -402,6 +415,7 @@ export default function App() {
             onSelectIngredient={selectIngredient}
             onSaveRecipeEdit={saveRecipeEdit}
             onDeleteRecipe={removeRecipe}
+            onToggleFavorite={toggleRecipeFavorite}
             onMergeMissing={mergeMissing}
             onCreateMissingItem={createAndMergeMissing}
             settings={settings}

@@ -147,6 +147,13 @@ export function editRecipe(recipeId: string, patch: RecipeEditPatch): Promise<Re
   });
 }
 
+export function setRecipeFavorite(recipeId: string, favorite: boolean): Promise<Recipe> {
+  return request<Recipe>(`/recipes/${recipeId}/favorite`, {
+    method: "PUT",
+    body: JSON.stringify({ favorite }),
+  });
+}
+
 export function deleteRecipe(recipeId: string): Promise<{ deleted: boolean }> {
   return request<{ deleted: boolean }>(`/recipes/${recipeId}`, { method: "DELETE" });
 }

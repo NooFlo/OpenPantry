@@ -142,6 +142,10 @@ class RecipeEditRequest(BaseModel):
     steps: list[str] | None = None
 
 
+class RecipeFavoriteRequest(BaseModel):
+    favorite: bool
+
+
 class ModelChoiceRequest(BaseModel):
     provider: str
     model: str
@@ -1236,6 +1240,15 @@ def edit_recipe(recipe_id: str, body: RecipeEditRequest):
         links = extract.link_ingredients_in_steps(updated["steps"], updated["ingredients"],
                                                  choice, cloud)
         updated = repo.set_step_ingredient_links(recipe_id, links)
+    return camelize(updated)
+
+
+@app.put("/api/recipes/{recipe_id}/favorite")
+def set_recipe_favorite(recipe_id: str, body: RecipeFavoriteRequest):
+    """Star or un-star a recipe; `favorite` rides along on every recipe payload."""
+    updated = repo.set_recipe_favorite(recipe_id, body.favorite)
+    if not updated:
+        raise HTTPException(404, "recipe not found")
     return camelize(updated)
 
 

@@ -199,6 +199,7 @@ export interface Recipe {
   category?: string;
   tags?: string[];
   imageUrl?: string;
+  favorite?: boolean;
   createdAt?: string;
 }
 

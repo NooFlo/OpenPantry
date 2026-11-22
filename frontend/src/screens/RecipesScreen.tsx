@@ -18,6 +18,7 @@ import {
   IconPencil,
   IconPlus,
   IconSearch,
+  IconStar,
   IconX,
 } from "../components/Icons";
 
@@ -40,6 +41,8 @@ interface RecipesScreenProps {
   onSelectIngredient: (recipeId: string, ingredientId: string) => void;
   onSaveRecipeEdit: (recipeId: string, patch: RecipeEditPatch) => Promise<unknown>;
   onDeleteRecipe: (recipeId: string) => Promise<unknown>;
+  /** Star / un-star a recipe; App state updates optimistically. */
+  onToggleFavorite: (recipeId: string, favorite: boolean) => void;
   /** Settings > Missing items: merge a group of unmatched rows onto one item. */
   onMergeMissing: (key: string, itemId: string, name?: string) => Promise<void>;
   /** Settings > Missing items: create the item for a group and link it. */
@@ -71,6 +74,7 @@ export default function RecipesScreen({
   onSelectIngredient,
   onSaveRecipeEdit,
   onDeleteRecipe,
+  onToggleFavorite,
   onMergeMissing,
   onCreateMissingItem,
   settings,
@@ -90,6 +94,7 @@ export default function RecipesScreen({
   const [query, setQuery] = useState("");
   const [activeFilters, setActiveFilters] = useState<string[]>([]);
   const [sort, setSort] = useState<Sort>("newest");
+  const [favoritesOnly, setFavoritesOnly] = useState(false);
   const [addingId, setAddingId] = useState<string | null>(null);
   const [addedId, setAddedId] = useState<string | null>(null);
   const [detailTab, setDetailTab] = useState<"ingredients" | "recipe">("ingredients");
@@ -134,6 +139,7 @@ export default function RecipesScreen({
   const filteredRecipes = useMemo(() => {
     const q = query.trim().toLowerCase();
     const filtered = recipes.filter((recipe) => {
+      if (favoritesOnly && !recipe.favorite) return false;
       if (activeFilters.length > 0) {
         const tags = (recipe.tags ?? []).map((t) => t.toLowerCase());
         if (!activeFilters.every((f) => tags.includes(f.toLowerCase()))) return false;
@@ -153,7 +159,7 @@ export default function RecipesScreen({
       );
     // recipes arrive newest-first from the API; keep that order for ties
     return filtered;
-  }, [recipes, query, activeFilters, sort]);
+  }, [recipes, query, activeFilters, sort, favoritesOnly]);
 
   const doImport = async () => {
     if (!value.trim() || busy) return;
@@ -604,8 +610,16 @@ export default function RecipesScreen({
         />
       </div>
 
-      {filterChips.length > 0 && (
-        <div className="chip-row" role="group" aria-label="Filter by category">
+      {(filterChips.length > 0 || recipes.some((r) => r.favorite)) && (
+        <div className="chip-row" role="group" aria-label="Filter recipes">
+          <button
+            className={favoritesOnly ? "chip active" : "chip"}
+            onClick={() => setFavoritesOnly((v) => !v)}
+            aria-pressed={favoritesOnly}
+          >
+            <IconStar size={13} filled={favoritesOnly} />
+            Favorites
+          </button>
           {filterChips.map((filter) => (
             <button
               key={filter}
@@ -655,6 +669,18 @@ export default function RecipesScreen({
           >
             {recipe.imageUrl ? (
               <span className="recipe-photo-wrap">
+                <span
+                  className={recipe.favorite ? "recipe-fav active" : "recipe-fav"}
+                  role="button"
+                  aria-label={recipe.favorite ? "Remove from favorites" : "Add to favorites"}
+                  aria-pressed={recipe.favorite}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onToggleFavorite(recipe.id, !recipe.favorite);
+                  }}
+                >
+                  <IconStar size={17} filled={recipe.favorite} />
+                </span>
                 <img className="recipe-photo" src={recipe.imageUrl} alt="" loading="lazy" />
                 <span className="recipe-photo-overlay">
                   <span className="item-name">{recipe.title}</span>
@@ -672,6 +698,18 @@ export default function RecipesScreen({
             ) : (
               <>
                 <div className="info">
+                  <span
+                    className={recipe.favorite ? "recipe-fav active" : "recipe-fav"}
+                    role="button"
+                    aria-label={recipe.favorite ? "Remove from favorites" : "Add to favorites"}
+                    aria-pressed={recipe.favorite}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onToggleFavorite(recipe.id, !recipe.favorite);
+                    }}
+                  >
+                    <IconStar size={17} filled={recipe.favorite} />
+                  </span>
                   <div className="item-name">{recipe.title}</div>
                   <div className="item-sub">
                     {recipe.basePortions} portions · {recipe.ingredients.length} ingredients

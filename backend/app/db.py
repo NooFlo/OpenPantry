@@ -68,6 +68,7 @@ CREATE TABLE IF NOT EXISTS recipes (
     tags_json TEXT NOT NULL DEFAULT '[]',
     image_url TEXT,
     step_ingredients_json TEXT,
+    favorite INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE TABLE IF NOT EXISTS ingredients (
@@ -255,6 +256,8 @@ def init_db():
         # (qty) shown behind them is computed from the portions at render
         if "step_ingredients_json" not in recipe_columns:
             db.execute("ALTER TABLE recipes ADD COLUMN step_ingredients_json TEXT")
+        if "favorite" not in recipe_columns:
+            db.execute("ALTER TABLE recipes ADD COLUMN favorite INTEGER NOT NULL DEFAULT 0")
         # per-person fills: dropping onto a divided meal field records
         # which person the portion is for
         fill_columns = {row["name"] for row in db.execute("PRAGMA table_info(plan_fills)")}

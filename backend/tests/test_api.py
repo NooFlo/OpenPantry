@@ -1330,3 +1330,25 @@ def test_missing_merge_after_item_created_between_list_and_merge(client):
             client.delete(f"/api/items/{created['id']}")
         if recipe:
             repo.delete_recipe(recipe["id"])
+
+
+def test_recipe_favorite_roundtrip(client):
+    text = """Favorites test recipe
+Zutaten für 2 Portionen:
+200 g Nudeln
+Kochen."""
+    recipe = client.post("/api/recipes/import", json={"kind": "text", "value": text}).json()
+    assert recipe["favorite"] is False
+
+    response = client.put(f"/api/recipes/{recipe['id']}/favorite", json={"favorite": True})
+    assert response.status_code == 200
+    assert response.json()["favorite"] is True
+    assert any(
+        r["id"] == recipe["id"] and r["favorite"] for r in client.get("/api/recipes").json()
+    )
+
+    response = client.put(f"/api/recipes/{recipe['id']}/favorite", json={"favorite": False})
+    assert response.json()["favorite"] is False
+
+    missing = client.put("/api/recipes/does-not-exist/favorite", json={"favorite": True})
+    assert missing.status_code == 404

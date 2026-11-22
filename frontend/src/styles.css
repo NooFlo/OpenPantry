@@ -2742,3 +2742,64 @@ button.summary-card {
   color: var(--text-3);
   flex: none;
 }
+
+/* recipe favorite star (top-left of recipe cards) */
+.recipe-card {
+  position: relative;
+}
+
+/* no-photo cards: keep the title clear of the star */
+.recipe-card .info {
+  padding-left: 30px;
+}
+
+.recipe-fav {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.55);
+  background: rgba(0, 0, 0, 0.35);
+  color: #fff;
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease, transform 120ms ease;
+}
+
+.recipe-fav:hover {
+  background: rgba(0, 0, 0, 0.5);
+  transform: scale(1.08);
+}
+
+.recipe-fav.active {
+  color: #f5b301;
+  border-color: rgba(245, 179, 1, 0.7);
+  background: rgba(0, 0, 0, 0.45);
+}
+
+/* planning: favorites + all-recipes pickers */
+.plan-pickers {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.plan-select {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 8px 10px;
+  font-size: 14px;
+  background: var(--bg);
+  color: var(--text);
+  cursor: pointer;
+  width: 100%;
+}
+
+.plan-select:hover {
+  border-color: var(--accent);
+}

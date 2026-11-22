@@ -206,3 +206,23 @@ export function IconTag(props: IconProps) {
     </Svg>
   );
 }
+
+/** Five-pointed star; `filled` marks the active (favorited) state. */
+export function IconStar({ filled = false, ...props }: IconProps & { filled?: boolean }) {
+  return (
+    <svg
+      width={props.size ?? 22}
+      height={props.size ?? 22}
+      viewBox="0 0 24 24"
+      fill={filled ? "currentColor" : "none"}
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={props.className}
+      aria-hidden="true"
+    >
+      <path d="M12 3.6l2.5 5.1 5.7.8-4.1 4 1 5.6L12 16.5l-5.1 2.6 1-5.6-4.1-4 5.7-.8z" />
+    </svg>
+  );
+}
