@@ -1,398 +1,293 @@
 #!/usr/bin/env python3
-"""OpenPantry USB scanner bridge — the Rock5 side of the control-code system.
+"""USB barcode scanner bridge for OpenPantry on the Rock 5A.
 
-Keyboard-wedge USB barcode scanners type their scans like a keyboard and
-press Enter. This daemon grabs the scanner's input device, buffers each
-scan into a line and routes it to the OpenPantry backend:
+Watches for USB HID keyboard devices (1D and 2D wedge scanners enumerate as
+keyboards), decodes keystrokes with a full US layout (shift, symbols,
+backspace) and routes the completed scan:
 
-- A product barcode (6–14 digits) goes to the endpoint of the active mode:
-    consume (default) → POST /api/scan/barcode   — deducts one package
-    bought            → POST /api/scan/purchase  — restocks one package
-  BOUGHT-mode scans of unknown products auto-create the item from its
-  Open Food Facts data; unknown barcodes land in the review popup (the
-  backend answers 404 and caches the product for the queue) — in any mode.
-- A control-code sticker switches the sticky mode:
-    BOUGHT 2000000000008 → mode "bought"
-    TRASH 2000000000015  → mode "consume" (trash *is* consume: scanning
-    one product deducts one package — the same as the default mode, which
-    is why there is no separate CONSUME sticker anymore)
-- A custom label's QR (or an NFC tag URL typed by a wedge-friendly reader)
-  contains the item's consume landing page, `<origin>/c/<item-id>` — the
-  bridge extracts the id and consumes one package via POST /api/scan/item.
+  digits, 6-14      -> product scan in the current mode (see below)
+  /c/<item-id> URL  -> item-label QR: consumes one package of that item
+  control code      -> switch mode (sticky, persisted across restarts)
 
-The mode is sticky until the next control code. Every scan is logged to
-the journal (systemd) / stdout. The control-code digits are fetched from
-the backend at startup (`GET /api/labels/control-codes` — the same single
-source of truth the sticker designs print from); the constants below are
-only the offline fallback.
+Scan modes (sticky until another control code is scanned):
+  TRASH   2000000000015  -> consume mode: scans deduct one package (default)
+  BOUGHT  2000000000008  -> bought mode: scans restock one package
+TRASH *is* consume — scanning the TRASH sticker simply returns to the
+default mode; there is no zero-and-reorder mode and no CONSUME sticker
+anymore (the empty/consume codes of the Rock5's original bridge retired
+with them; the control-code digits are fetched from the backend at startup
+so future changes in labels.py need only a service restart).
 
-Usage:
-  scanner_bridge.py --url http://pantry.local:8321 \
-      --device /dev/input/by-id/usb-<scanner>-event-kbd
-  scanner_bridge.py --list-devices
-  scanner_bridge.py --selftest        # no hardware: routing table dry run
+Unknown barcodes are logged with their Open Food Facts data and land in the
+app's review queue. Non-product content (arbitrary QR, random text) is logged
+and ignored. Purely passive on the input device (no grabs), so a normal
+keyboard still works.
 """
-
-from __future__ import annotations
-
-import argparse
 import json
 import logging
+import os
 import re
-import sys
+import threading
+import time
 import urllib.error
 import urllib.request
 
-try:
-    import evdev
-    from evdev import ecodes, list_devices
-except ImportError:  # evdev needs Linux — the selftest still runs anywhere
-    evdev = None
-    ecodes = None
+import evdev
 
-    def list_devices():  # type: ignore[misc]
-        return []
-
-
-def _ensure_evdev():
-    if evdev is None:
-        sys.exit("python-evdev is required on this machine: "
-                 "`sudo apt install python3-evdev` or `pip install evdev`")
-
-# Fallback control codes (GS1 in-store reserved range, no product collides).
-# Normally fetched from the backend at startup so a future code change in
-# labels.py propagates to the bridge with a restart — no code edit here.
-FALLBACK_CONTROL_CODES = {
-    "bought": "2000000000008",
-    "trash": "2000000000015",
+BASE = os.environ.get("PANTRY_URL", "http://localhost:8321")
+SCAN_URLS = {
+    "consume": BASE + "/api/scan/barcode",
+    "bought": BASE + "/api/scan/purchase",
 }
-BARCODE_RE = re.compile(r"^\d{6,14}$")
-# A custom-label QR / NFC tag carries the consume landing page: <origin>/c/<id>
-ITEM_URL_RE = re.compile(r"(?:https?://[^/\s]+)?/c/([A-Za-z0-9._~-]+)", re.IGNORECASE)
+ITEM_SCAN_URL = BASE + "/api/scan/item"
+LOOKUP_URL = BASE + "/api/barcode/lookup"
+CODES_URL = BASE + "/api/labels/control-codes"
+# Fallback control codes (GS1 in-store reserved range — no product collides);
+# normally fetched from the backend at startup, the same single source of
+# truth the sticker designs in the app print from.
+CONTROL_CODES = {
+    "2000000000008": "bought",
+    "2000000000015": "consume",  # TRASH sticker: back to the deduct-one default
+}
+MODE_LABELS = {"consume": "CONSUME/TRASH (-1 package, default)",
+               "bought": "BOUGHT (+1 package)"}
+MODE_FILE = "/var/lib/barcode-bridge/mode"
+SCAN_TIMEOUT = 0.5  # seconds of silence that resets the buffer
+VALID_MODES = set(SCAN_URLS)
+DIGITS_RE = re.compile(r"^[0-9]{6,14}$")
+ITEM_URL_RE = re.compile(r"/c/([A-Za-z0-9._-]+)")
 
-# Control-code keys the backend serves; the sticky scan *modes* are
-# "consume" (the default) and "bought" — TRASH switches back to consume.
-CONTROL_KEYS = ("bought", "trash")
-MODES = ("consume", "bought")
+handlers = [logging.StreamHandler()]
+try:  # journald captures stdout; the file log is a convenience on the Rock5
+    handlers.append(logging.FileHandler("/var/log/barcode-bridge.log"))
+except OSError:
+    pass
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(message)s",
+    handlers=handlers,
+)
+log = logging.getLogger("barcode-bridge")
 
-log = logging.getLogger("scanner-bridge")
-
-
-# ---------------------------------------------------------------- backend API
-
-
-class Pantry:
-    def __init__(self, base_url: str, timeout: float = 5.0):
-        self.base_url = base_url.rstrip("/")
-        self.timeout = timeout
-
-    def _request(self, method: str, path: str, payload: dict | None = None):
-        body = json.dumps(payload).encode() if payload is not None else None
-        req = urllib.request.Request(
-            self.base_url + path, data=body, method=method,
-            headers={"Content-Type": "application/json"})
-        try:
-            with urllib.request.urlopen(req, timeout=self.timeout) as response:
-                return response.status, json.loads(response.read() or b"null")
-        except urllib.error.HTTPError as err:
-            try:
-                detail = err.read().decode(errors="replace").strip()
-            except Exception:  # noqa: BLE001
-                detail = ""
-            return err.code, detail
-        except urllib.error.URLError as err:
-            return 0, str(err)
-
-    def health(self):
-        return self._request("GET", "/api/health")
-
-    def control_codes(self):
-        status, body = self._request("GET", "/api/labels/control-codes")
-        if status == 200 and isinstance(body, list):
-            return {entry["key"]: entry["code"] for entry in body
-                    if isinstance(entry, dict) and entry.get("key") in CONTROL_KEYS}
-        return None
-
-    def scan(self, endpoint: str, payload: dict):
-        return self._request("POST", f"/api/scan/{endpoint}", payload)
+_mode_lock = threading.Lock()
+_mode = "consume"
 
 
-# ---------------------------------------------------------------- routing
+def current_mode() -> str:
+    with _mode_lock:
+        return _mode
 
 
-class Router:
-    """Decides what a scanned line means. One instance holds the sticky mode."""
+def set_mode(mode: str) -> None:
+    global _mode
+    with _mode_lock:
+        _mode = mode
+    try:
+        os.makedirs(os.path.dirname(MODE_FILE), exist_ok=True)
+        with open(MODE_FILE, "w") as fh:
+            fh.write(mode)
+    except OSError as e:
+        log.warning("could not persist mode %s: %s", mode, e)
+    log.info("MODE → %s", MODE_LABELS.get(mode, mode))
 
-    def __init__(self, pantry: Pantry, control_codes: dict[str, str]):
-        self.pantry = pantry
-        self.control_codes = control_codes
-        self.mode = "consume"
-        self.bought_code = control_codes.get("bought", FALLBACK_CONTROL_CODES["bought"])
-        self.trash_code = control_codes.get("trash", FALLBACK_CONTROL_CODES["trash"])
 
-    def handle_line(self, line: str) -> None:
-        text = line.strip()
-        if not text:
-            return
-        match = ITEM_URL_RE.search(text)
-        if match:
-            item_id = match.group(1).rstrip("/.-")
-            status, body = self.pantry.scan("item", {"item_id": item_id})
-            self._report(status, body, f"label QR — item {item_id} — one package consumed")
-            return
-        if text == self.bought_code:
-            self.mode = "bought"
-            log.info("control code BOUGHT scanned — mode: subsequent scans restock +1 package")
-            return
-        if text == self.trash_code:
-            self.mode = "consume"
-            log.info("control code TRASH scanned — mode: back to consume "
-                     "(subsequent scans deduct one package)")
-            return
-        if BARCODE_RE.match(text):
-            if self.mode == "bought":
-                status, body = self.pantry.scan("purchase", {"barcode": text})
-                self._report(status, body, f"bought-mode scan {text} — restocked one package")
-            else:
-                status, body = self.pantry.scan("barcode", {"barcode": text})
-                self._report(status, body, f"consume-mode scan {text} — deducted one package")
-            return
-        log.warning("ignored scan (neither barcode, control code nor item URL): %r", text)
+def fetch_control_codes() -> dict[str, str]:
+    """Adopt the backend's control-code set (bought / trash keys map to modes:
+    trash means 'back to consume' — scanning it deducts nothing itself)."""
+    global CONTROL_CODES
+    try:
+        with urllib.request.urlopen(CODES_URL, timeout=10) as resp:
+            codes = {entry["code"]: entry["key"] for entry in json.load(resp)}
+        result = {}
+        for code, key in codes.items():
+            if key in ("bought", "trash"):
+                # trash = consume: the sticker switches to the default mode
+                result[code] = "bought" if key == "bought" else "consume"
+        if result:
+            if result != CONTROL_CODES:
+                log.info("backend control codes override the fallback: %s", result)
+            CONTROL_CODES = result
+    except Exception as e:  # noqa: BLE001 — offline fallback keeps the bridge up
+        log.warning("could not fetch control codes from %s (%s) — using fallback",
+                    CODES_URL, e)
+    return CONTROL_CODES
 
-    def _report(self, status: int, body, success_note: str) -> None:
+
+def _build_keymaps():
+    base, shifted = {}, {}
+    digits = "1234567890"
+    symbols = "!@#$%^&*()"
+    for index, digit in enumerate(digits):
+        base[getattr(evdev.ecodes, "KEY_" + digit)] = digit
+        shifted[getattr(evdev.ecodes, "KEY_" + digit)] = symbols[index]
+    for letter in "abcdefghijklmnopqrstuvwxyz":
+        code = getattr(evdev.ecodes, "KEY_" + letter.upper())
+        base[code] = letter
+        shifted[code] = letter.upper()
+    pairs = {
+        "MINUS": ("-", "_"), "EQUAL": ("=", "+"),
+        "LEFTBRACE": ("[", "{"), "RIGHTBRACE": ("]", "}"),
+        "BACKSLASH": ("\\", "|"), "SEMICOLON": (";", ":"),
+        "APOSTROPHE": ("'", '"'), "GRAVE": ("`", "~"),
+        "COMMA": (",", "<"), "DOT": (".", ">"), "SLASH": ("/", "?"),
+    }
+    for name, (plain, shifted_char) in pairs.items():
+        code = getattr(evdev.ecodes, "KEY_" + name)
+        base[code] = plain
+        shifted[code] = shifted_char
+    return base, shifted
+
+
+KEY_BASE, KEY_SHIFT = _build_keymaps()
+SHIFT_CODES = (evdev.ecodes.KEY_LEFTSHIFT, evdev.ecodes.KEY_RIGHTSHIFT)
+
+
+def _post(url: str, payload: dict, timeout: int = 10):
+    body = json.dumps(payload).encode()
+    req = urllib.request.Request(
+        url, data=body, headers={"Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            resp.read()
+            return resp.status, None
+    except urllib.error.HTTPError as e:
+        e.read()
+        return e.code, None
+    except Exception as e:  # noqa: BLE001
+        return None, str(e)
+
+
+def describe_product(barcode: str) -> str:
+    """Open Food Facts enrichment for unknown barcodes (review queue fills in)."""
+    body = json.dumps({"barcode": barcode}).encode()
+    req = urllib.request.Request(
+        LOOKUP_URL, data=body, headers={"Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            data = json.load(resp)
+    except Exception as e:  # noqa: BLE001
+        return "(lookup failed: %s)" % e
+    if data.get("status") == "not_found":
+        return "(no product found on Open Food Facts)"
+    product = data.get("product") or {}
+    desc = 'product="%s"' % product.get("name", "?")
+    if product.get("brand"):
+        desc += " brand=%s" % product["brand"]
+    suggestions = [s.get("name") for s in data.get("suggestions") or []]
+    if suggestions:
+        desc += " maybe: %s" % "/".join(suggestions)
+    return desc
+
+
+def post_scancode(content: str) -> None:
+    if content in CONTROL_CODES:
+        set_mode(CONTROL_CODES[content])
+        return
+    mode = current_mode()
+    if DIGITS_RE.match(content):
+        status, err = _post(SCAN_URLS[mode], {"barcode": content})
         if status == 200:
-            name = ""
-            if isinstance(body, dict):
-                name = f" {body.get('name', '')}".rstrip()
-            log.info("OK%s — %s", name, success_note)
+            log.info("SCAN OK [%s] %s -> 200", mode, content)
         elif status == 404:
-            log.info("unknown barcode — landed in the OpenPantry review queue (%s)", body)
-        elif status == 500:
-            log.error("backend error on scan: %s", body)
+            log.info("SCAN UNKNOWN [%s] barcode=%s %s", mode, content,
+                     describe_product(content))
+        elif status is None:
+            log.error("SCAN [%s] %s failed: %s", mode, content, err)
         else:
-            log.error("scan failed (HTTP %s): %s", status, body)
+            log.error("SCAN [%s] %s failed: HTTP %s", mode, content, status)
+        return
+    match = ITEM_URL_RE.search(content)
+    if match:
+        status, err = _post(ITEM_SCAN_URL, {"item_id": match.group(1)})
+        if status == 200:
+            log.info("SCAN OK [item] /c/%s -> 200", match.group(1))
+        elif status == 404:
+            log.info("SCAN UNKNOWN [item] /c/%s (no such item)", match.group(1))
+        else:
+            log.error("SCAN [item] /c/%s failed: %s", match.group(1),
+                      err or "HTTP %s" % status)
+        return
+    log.info("SCAN non-product content ignored: %r", content[:80])
 
 
-# ---------------------------------------------------------------- HID reading
+def is_scanner_candidate(dev: evdev.InputDevice) -> bool:
+    """A wedge scanner looks like a keyboard: digits and an Enter key."""
+    try:
+        caps = dev.capabilities(verbose=False)
+        keys = set(caps.get(evdev.ecodes.EV_KEY, []))
+        return (evdev.ecodes.KEY_ENTER in keys and
+                evdev.ecodes.KEY_1 in keys and
+                evdev.ecodes.KEY_0 in keys)
+    except Exception:  # noqa: BLE001
+        return False
 
 
-# Unshifted and shifted characters per evdev key code — enough for EAN/QR
-# wedges (digits, letters and the few symbols a URL needs). Only built where
-# evdev exists (Linux); the keymap globals stay empty elsewhere and
-# LineReader is never used without a real device.
-_KEY_CHAR: dict[int, str] = {}
-_KEY_CHAR_SHIFT: dict[int, str] = {}
-_SHIFT_KEYS: set[int] = set()
-_ENTER_KEYS: set[int] = set()
-if ecodes is not None:
-    _KEY_CHAR.update({
-        ecodes.KEY_1: "1", ecodes.KEY_2: "2", ecodes.KEY_3: "3", ecodes.KEY_4: "4",
-        ecodes.KEY_5: "5", ecodes.KEY_6: "6", ecodes.KEY_7: "7", ecodes.KEY_8: "8",
-        ecodes.KEY_9: "9", ecodes.KEY_0: "0", ecodes.KEY_MINUS: "-",
-        ecodes.KEY_EQUAL: "=", ecodes.KEY_SPACE: " ", ecodes.KEY_DOT: ".",
-        ecodes.KEY_COMMA: ",", ecodes.KEY_SLASH: "/",
-        ecodes.KEY_SEMICOLON: ";", ecodes.KEY_APOSTROPHE: "'",
-    })
-    _KEY_CHAR_SHIFT.update({
-        ecodes.KEY_1: "!", ecodes.KEY_2: "@", ecodes.KEY_3: "#", ecodes.KEY_4: "$",
-        ecodes.KEY_5: "%", ecodes.KEY_6: "^", ecodes.KEY_7: "&", ecodes.KEY_8: "*",
-        ecodes.KEY_9: "(", ecodes.KEY_0: ")", ecodes.KEY_MINUS: "_",
-        ecodes.KEY_EQUAL: "+", ecodes.KEY_SPACE: " ", ecodes.KEY_DOT: ">",
-        ecodes.KEY_COMMA: "<", ecodes.KEY_SLASH: "?",
-        ecodes.KEY_SEMICOLON: ":", ecodes.KEY_APOSTROPHE: "\"",
-    })
-    for _code in range(ecodes.KEY_A, ecodes.KEY_Z + 1):
-        _KEY_CHAR[_code] = chr(ord("a") + _code - ecodes.KEY_A)
-        _KEY_CHAR_SHIFT[_code] = chr(ord("A") + _code - ecodes.KEY_A)
-    _KEY_CHAR.update({
-        ecodes.KEY_KP0: "0", ecodes.KEY_KP1: "1", ecodes.KEY_KP2: "2",
-        ecodes.KEY_KP3: "3", ecodes.KEY_KP4: "4", ecodes.KEY_KP5: "5",
-        ecodes.KEY_KP6: "6", ecodes.KEY_KP7: "7", ecodes.KEY_KP8: "8",
-        ecodes.KEY_KP9: "9",
-    })
-    _SHIFT_KEYS.update((ecodes.KEY_LEFTSHIFT, ecodes.KEY_RIGHTSHIFT))
-    _ENTER_KEYS.update((ecodes.KEY_ENTER, ecodes.KEY_KPENTER))
-
-
-class LineReader:
-    """Buffers one wedge scan (Enter-terminated) from an input device."""
-
-    def __init__(self, device, grab: bool = True):
-        self.device = device
-        self.buffer: list[str] = []
-        self.shift = False
-        if grab:
-            try:
-                device.grab()  # keep the typed digits out of the shell/VT
-            except OSError as err:
-                log.warning("could not grab %s (%s) — scans will also reach the focused window",
-                            device.path, err)
-
-    def fileno(self) -> int:
-        return self.device.fd
-
-    def read_line(self) -> str | None:
-        """Process available events; return a finished line when Enter arrives."""
-        for event in self.device.read():
-            if event.type != ecodes.EV_KEY:
+def follow_device(dev: evdev.InputDevice) -> None:
+    buffer: list[str] = []
+    last_key_time = 0.0
+    shift_down = False
+    log.info("listening on %s (%s)", dev.path, dev.name)
+    try:
+        for event in dev.read_loop():
+            if event.type != evdev.ecodes.EV_KEY:
                 continue
-            key, value = event.code, event.value  # 1 = press, 0 = release
-            if key in _SHIFT_KEYS:
-                self.shift = value == 1
-            elif value == 1 and key in _ENTER_KEYS:
-                line = "".join(self.buffer)
-                self.buffer.clear()
-                return line
-            elif value == 1 and not self.shift and key in _KEY_CHAR:
-                self.buffer.append(_KEY_CHAR[key])
-            elif value == 1 and self.shift and key in _KEY_CHAR_SHIFT:
-                self.buffer.append(_KEY_CHAR_SHIFT[key])
-        return None
+            if event.code in SHIFT_CODES:
+                shift_down = event.value != 0
+                continue
+            if event.value != 1:  # ignore autorepeat and releases
+                continue
+            now = time.monotonic()
+            if now - last_key_time > SCAN_TIMEOUT:
+                buffer = []
+            last_key_time = now
+            if event.code == evdev.ecodes.KEY_ENTER:
+                if buffer:
+                    post_scancode("".join(buffer))
+                buffer = []
+            elif event.code == evdev.ecodes.KEY_BACKSPACE:
+                if buffer:
+                    buffer.pop()
+            elif event.code in KEY_BASE:
+                buffer.append(KEY_SHIFT[event.code] if shift_down else KEY_BASE[event.code])
+    except OSError:
+        log.info("device %s went away", dev.path)
 
 
-# ---------------------------------------------------------------- entry point
-
-
-def pick_device(name: str):
-    _ensure_evdev()
-    for path in list_devices():
-        try:
-            device = evdev.InputDevice(path)
-        except OSError:
-            continue
-        if name in device.name or name in path:
-            return device
-    return None
-
-
-def open_devices(paths: list[str], grab: bool) -> list[LineReader]:
-    _ensure_evdev()
-    readers = []
-    for path in paths:
-        try:
-            readers.append(LineReader(evdev.InputDevice(path), grab=grab))
-            log.info("listening on %s", path)
-        except OSError as err:
-            log.error("cannot open %s: %s", path, err)
-    return readers
-
-
-def selftest(pantry: Pantry) -> int:
-    """Routing dry run without hardware: exercises every branch of handle_line
-    against a stub backend, so a deployment can be verified on any machine."""
-    calls = []
-
-    class Stub:
-        def scan(self, endpoint, payload):
-            calls.append((endpoint, payload))
-            return 200, {"name": "Salz"}
-
-        def control_codes(self):
-            return None
-
-    router = Router.__new__(Router)  # type: ignore[arg-type]
-    router.pantry = Stub()  # type: ignore[assignment]
-    router.mode = "consume"
-    router.bought_code = FALLBACK_CONTROL_CODES["bought"]
-    router.trash_code = FALLBACK_CONTROL_CODES["trash"]
-    router.handle_line("2000000000008")           # → mode bought
-    router.handle_line("4012345678902")          # → /api/scan/purchase
-    router.handle_line("2000000000015")          # → back to consume
-    router.handle_line("4012345678902")          # → /api/scan/barcode
-    router.handle_line("http://192.168.178.96:8321/c/salz")  # → /api/scan/item
-    router.handle_line("/c/milch")               # relative label URL
-    router.handle_line("12-AB-not-a-barcode")    # → ignored (no call)
-    expected = [
-        ("purchase", {"barcode": "4012345678902"}),
-        ("barcode", {"barcode": "4012345678902"}),
-        ("item", {"item_id": "salz"}),
-        ("item", {"item_id": "milch"}),
-    ]
-    ok = calls == expected
-    for endpoint, payload in calls:
-        print(f"POST /api/scan/{endpoint} {payload}")
-    print(f"{'PASS' if ok else 'FAIL'} — {len(calls)} API calls in dry run")
-    return 0 if ok else 1
-
-
-def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--url", default="http://localhost:8321",
-                        help="OpenPantry base URL (default: http://localhost:8321)")
-    parser.add_argument("--device", action="append", default=[],
-                        help="input device path(s) of the scanner — repeatable "
-                             "(see --list-devices)")
-    parser.add_argument("--device-name", action="append", default=[],
-                        help="scanner input device(s) chosen by (sub)string of "
-                             "their name or path — repeatable")
-    parser.add_argument("--no-grab", action="store_true",
-                        help="do not grab the device (scans also reach the "
-                             "focused window — useful for testing)")
-    parser.add_argument("--list-devices", action="store_true",
-                        help="list input devices seen by evdev and exit")
-    parser.add_argument("--selftest", action="store_true",
-                        help="routing dry run without hardware, then exit")
-    args = parser.parse_args()
-
-    logging.basicConfig(level=logging.INFO,
-                        format="%(asctime)s %(levelname)s %(message)s")
-
-    if args.selftest:
-        return selftest(Pantry(args.url))
-
-    if args.list_devices:
-        _ensure_evdev()
-        for path in list_devices():
-            try:
-                print(f"{path}  {evdev.InputDevice(path).name}")
-            except OSError:
-                print(f"{path}  (unreadable)")
-        return 0
-
-    devices: list[str] = list(args.device)
-    for needle in args.device_name:
-        found = pick_device(needle)
-        if found is None:
-            log.error("no input device matches %r", needle)
-            return 1
-        devices.append(found.path)
-
-    if not devices:
-        log.error("no --device given (find yours with --list-devices)")
-        return 1
-
-    pantry = Pantry(args.url)
-    status, _ = pantry.health()
-    if status != 200:
-        log.warning("backend at %s did not answer /api/health (HTTP %s) — "
-                    "starting anyway, scans will retry", args.url, status)
-    else:
-        log.info("backend online at %s", args.url)
-
-    codes = pantry.control_codes()
-    if codes and codes != FALLBACK_CONTROL_CODES:
-        log.info("backend control codes override the fallback: %s", codes)
-    control_codes = codes or FALLBACK_CONTROL_CODES
-    router = Router(pantry, control_codes)
-
-    import select
-
-    readers = open_devices(devices, grab=not args.no_grab)
-    if not readers:
-        return 1
-    log.info("ready — mode: %s (control codes BOUGHT %s / TRASH %s)",
-             router.mode, router.bought_code, router.trash_code)
+def main() -> None:
+    global _mode
+    try:
+        with open(MODE_FILE) as fh:
+            saved = fh.read().strip()
+        if saved in VALID_MODES:
+            _mode = saved
+        elif saved:
+            # a stale mode from an older bridge (e.g. "empty") -> default
+            log.info("stored mode %r no longer exists, resetting to consume", saved)
+    except OSError:
+        pass
+    fetch_control_codes()
+    log.info("barcode bridge started, mode=%s, API=%s",
+             MODE_LABELS.get(_mode, _mode), BASE)
+    watched: dict[str, threading.Thread] = {}
     while True:
-        try:
-            _, _, _ = select.select(readers, [], [])
-        except KeyboardInterrupt:
-            return 0
-        for reader in readers:
-            line = reader.read_line()
-            while line is not None:
-                router.handle_line(line)
-                line = reader.read_line()
+        for path, thread in list(watched.items()):
+            if not thread.is_alive():
+                log.info("releasing %s, reader stopped", path)
+                del watched[path]
+        for path in evdev.list_devices():
+            if path in watched:
+                continue
+            try:
+                dev = evdev.InputDevice(path)
+            except OSError:
+                continue
+            if is_scanner_candidate(dev):
+                thread = threading.Thread(target=follow_device, args=(dev,),
+                                           daemon=True)
+                watched[path] = thread
+                thread.start()
+        time.sleep(2)
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    main()
