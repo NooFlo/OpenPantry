@@ -19,12 +19,16 @@ interface AddItemSheetProps {
   onClose: () => void;
   /** Categories already in use — autocomplete suggestions. */
   categories?: string[];
+  /** Prefills (settings > Missing items > create): the ingredient's name
+   *  and, when the group carries one, its food tag. */
+  initialName?: string;
+  initialConcept?: { id: string; label: string } | null;
 }
 
 /** Manual item creation with every attribute: name, category, tag,
  *  tracking mode, stock and alarm thresholds, package sizes, barcode. */
-export default function AddItemSheet({ onAddItem, onClose, categories }: AddItemSheetProps) {
-  const [name, setName] = useState("");
+export default function AddItemSheet({ onAddItem, onClose, categories, initialName, initialConcept }: AddItemSheetProps) {
+  const [name, setName] = useState(initialName ?? "");
   const [category, setCategory] = useState("Pantry");
   const [customCategory, setCustomCategory] = useState("");
   const [unit, setUnit] = useState<Unit>("pcs");
@@ -34,8 +38,8 @@ export default function AddItemSheet({ onAddItem, onClose, categories }: AddItem
   const [buyQty, setBuyQty] = useState(1);
   const [alarmQty, setAlarmQty] = useState(0);
   const [barcode, setBarcode] = useState("");
-  const [conceptId, setConceptId] = useState<string | null>(null);
-  const [conceptLabel, setConceptLabel] = useState<string | null>(null);
+  const [conceptId, setConceptId] = useState<string | null>(initialConcept?.id ?? null);
+  const [conceptLabel, setConceptLabel] = useState<string | null>(initialConcept?.label ?? null);
   const [conceptDraft, setConceptDraft] = useState("");
   const [conceptHint, setConceptHint] = useState<string | null>(null);
   const [conceptBusy, setConceptBusy] = useState(false);

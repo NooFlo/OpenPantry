@@ -1,5 +1,6 @@
 import { Fragment, useMemo, useState } from "react";
-import type { Ingredient, Item, ModelList, Recipe, RecipeEditPatch, Settings, SettingsPatch } from "../types";
+import { CANONICAL_CATEGORIES } from "../types";
+import type { Ingredient, Item, ItemCreatePayload, ModelList, Recipe, RecipeEditPatch, Settings, SettingsPatch } from "../types";
 import { importRecipe } from "../api";
 import { maxPortions, missingAmount, scaledAmount, ingredientInStock, formatQty, stepSegments, baseIngredientName } from "../lib/cooking";
 import { isBinary } from "../lib/tracking";
@@ -8,6 +9,7 @@ import { useMediaQuery } from "../lib/useMediaQuery";
 import Sheet from "../components/Sheet";
 import ThemeToggle from "../components/ThemeToggle";
 import ModelSettingsSheet from "../components/ModelSettingsSheet";
+import MissingItemsSheet from "../components/MissingItemsSheet";
 import {
   IconCheck,
   IconClock,
@@ -38,6 +40,10 @@ interface RecipesScreenProps {
   onSelectIngredient: (recipeId: string, ingredientId: string) => void;
   onSaveRecipeEdit: (recipeId: string, patch: RecipeEditPatch) => Promise<unknown>;
   onDeleteRecipe: (recipeId: string) => Promise<unknown>;
+  /** Settings > Missing items: merge a group of unmatched rows onto one item. */
+  onMergeMissing: (key: string, itemId: string) => Promise<void>;
+  /** Settings > Missing items: create the item for a group and link it. */
+  onCreateMissingItem: (key: string, payload: ItemCreatePayload) => Promise<void>;
   settings: Settings;
   models: ModelList;
   onSaveSettings: (patch: SettingsPatch) => void;
@@ -65,6 +71,8 @@ export default function RecipesScreen({
   onSelectIngredient,
   onSaveRecipeEdit,
   onDeleteRecipe,
+  onMergeMissing,
+  onCreateMissingItem,
   settings,
   models,
   onSaveSettings,
@@ -74,6 +82,8 @@ export default function RecipesScreen({
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [importOpen, setImportOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsMenuOpen, setSettingsMenuOpen] = useState(false);
+  const [missingOpen, setMissingOpen] = useState(false);
   const [kind, setKind] = useState<"link" | "text">("link");
   const [value, setValue] = useState("");
   const [busy, setBusy] = useState(false);
@@ -86,6 +96,17 @@ export default function RecipesScreen({
   const [activeStep, setActiveStep] = useState<number | null>(null);
   const [editState, setEditState] = useState<{ recipeId: string; draft: RecipeDraft } | null>(null);
   const [savingEdit, setSavingEdit] = useState(false);
+
+  // categories in use — autocomplete suggestions for the nested item sheet
+  const categories = useMemo(() => [...new Set(items.map((i) => i.category))], [items]);
+  // canonical order first, then customs alphabetically — picker suggestions
+  const categorySuggestions = useMemo(
+    () => [
+      ...CANONICAL_CATEGORIES.filter((c) => categories.includes(c)),
+      ...categories.filter((c) => !CANONICAL_CATEGORIES.includes(c)).sort(),
+    ],
+    [categories]
+  );
 
   const selected = recipes.find((r) => r.id === selectedId) ?? null;
   const twoPane = useMediaQuery("(min-width: 1180px)");
@@ -536,7 +557,7 @@ export default function RecipesScreen({
       <header className="screen-header">
         <h1 className="screen-title">Recipes</h1>
         <div className="header-actions">
-          <button className="icon-btn" onClick={() => setSettingsOpen(true)} aria-label="Model settings">
+          <button className="icon-btn" onClick={() => setSettingsMenuOpen(true)} aria-label="Settings">
             <IconGear size={19} />
           </button>
           <ThemeToggle theme={theme} onToggle={onToggleTheme} />
@@ -725,6 +746,43 @@ export default function RecipesScreen({
         </Sheet>
       )}
 
+      {settingsMenuOpen && (
+        <Sheet onClose={() => setSettingsMenuOpen(false)}>
+          <h2 className="sheet-title">Settings</h2>
+          <p className="sheet-sub">Recipe tools and pantry matching.</p>
+          <div className="settings-menu">
+            <button
+              className="settings-menu-row"
+              onClick={() => {
+                setSettingsMenuOpen(false);
+                setSettingsOpen(true);
+              }}
+            >
+              <span>
+                Model settings
+                <span className="settings-menu-sub">Local or cloud model for recipe imports</span>
+              </span>
+              <span className="settings-menu-chevron">›</span>
+            </button>
+            <button
+              className="settings-menu-row"
+              onClick={() => {
+                setSettingsMenuOpen(false);
+                setMissingOpen(true);
+              }}
+            >
+              <span>
+                Missing items
+                <span className="settings-menu-sub">
+                  Match ingredients that no inventory item covers yet
+                </span>
+              </span>
+              <span className="settings-menu-chevron">›</span>
+            </button>
+          </div>
+        </Sheet>
+      )}
+
       {settingsOpen && (
         <ModelSettingsSheet
           task="recipes"
@@ -733,6 +791,16 @@ export default function RecipesScreen({
           llmAvailable={models.llmAvailable}
           onSave={onSaveSettings}
           onClose={() => setSettingsOpen(false)}
+        />
+      )}
+
+      {missingOpen && (
+        <MissingItemsSheet
+          items={items}
+          categories={categorySuggestions}
+          onMerge={onMergeMissing}
+          onCreateAndMerge={onCreateMissingItem}
+          onClose={() => setMissingOpen(false)}
         />
       )}
     </div>

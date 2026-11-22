@@ -823,6 +823,22 @@ def match_recipe_ingredient(recipe_id: str, ingredient_id: str, item_id: str, am
     return get_recipe(recipe_id)
 
 
+def merge_ingredient_rows(updates: list[dict]) -> int:
+    """Settings > Missing items, merge: relink several ingredient rows to
+    the chosen inventory item in one pass, rewriting their raw text to
+    name it. Confirmed identity merge -- substitute marks and buy/alias
+    suggestions drop away."""
+    with get_db() as db:
+        for u in updates:
+            db.execute(
+                "UPDATE ingredients SET raw = ?, item_id = ?, concept_id = ?,"
+                " suggestion = NULL, substitute_kind = NULL, substitute_note = NULL,"
+                " tracked = 1 WHERE id = ? AND recipe_id = ?",
+                (u["raw"], u["item_id"], u["concept_id"],
+                 u["ingredient_id"], u["recipe_id"]))
+    return len(updates)
+
+
 STANDARDIZE_FIELDS = {"item_id", "suggestion", "tracked", "concept_id",
                       "substitute_kind", "substitute_note"}
 

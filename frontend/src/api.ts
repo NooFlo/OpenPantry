@@ -1,4 +1,4 @@
-import type { ControlCodeInfo, CustomLabelDesign, CustomLabelInfo, Item, ItemCreatePayload, ItemPatch, ModelList, PendingBarcode, PlanShoppingEntry, Receipt, Recipe, RecipeEditPatch, ScanLogEntry, Settings, SettingsPatch, ShoppingListEntry, WeekPlan } from "./types";
+import type { ControlCodeInfo, CustomLabelDesign, CustomLabelInfo, Item, ItemCreatePayload, ItemPatch, MissingGroup, MissingMergeResult, ModelList, PendingBarcode, PlanShoppingEntry, Receipt, Recipe, RecipeEditPatch, ScanLogEntry, Settings, SettingsPatch, ShoppingListEntry, WeekPlan } from "./types";
 
 const BASE = "/api";
 
@@ -106,6 +106,17 @@ export function matchReceiptItem(receiptId: string, itemId: string, productName:
   return request<Receipt>(`/receipts/${receiptId}/items/${itemId}/match`, {
     method: "POST",
     body: JSON.stringify({ product_name: productName }),
+  });
+}
+
+export function fetchMissingGroups(): Promise<MissingGroup[]> {
+  return request<MissingGroup[]>("/recipes/missing-items");
+}
+
+export function mergeMissingGroup(key: string, itemId: string): Promise<MissingMergeResult> {
+  return request<MissingMergeResult>("/recipes/missing-items/merge", {
+    method: "POST",
+    body: JSON.stringify({ key, item_id: itemId }),
   });
 }
 

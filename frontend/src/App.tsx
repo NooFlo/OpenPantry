@@ -21,6 +21,7 @@ import {
   fetchShoppingList,
   addItemBarcode,
   createItem,
+  mergeMissingGroup,
   matchRecipeIngredient,
   matchReceiptItem as matchReceiptItemApi,
   pushShoppingList,
@@ -298,6 +299,22 @@ export default function App() {
       .catch(console.error);
   };
 
+  /** Settings > Missing items, merge: relink all rows of one food group
+   *  onto an inventory item, then pull the fresh recipes + items. */
+  const mergeMissing = async (key: string, itemId: string) => {
+    await mergeMissingGroup(key, itemId);
+    const [updatedItems, updatedRecipes] = await Promise.all([fetchItems(), fetchRecipes()]);
+    setItems(updatedItems);
+    setRecipes(updatedRecipes);
+  };
+
+  /** Settings > Missing items, create: add the item, then link the group. */
+  const createAndMergeMissing = async (key: string, payload: ItemCreatePayload) => {
+    const created = await createItem(payload);
+    setItems((prev) => [...prev, created]);
+    await mergeMissing(key, created.id);
+  };
+
   const saveRecipeEdit = (recipeId: string, patch: RecipeEditPatch) =>
     editRecipe(recipeId, patch).then((updated) => {
       setRecipes((prev) => prev.map((r) => (r.id === updated.id ? updated : r)));
@@ -374,6 +391,8 @@ export default function App() {
             onSelectIngredient={selectIngredient}
             onSaveRecipeEdit={saveRecipeEdit}
             onDeleteRecipe={removeRecipe}
+            onMergeMissing={mergeMissing}
+            onCreateMissingItem={createAndMergeMissing}
             settings={settings}
             models={models}
             onSaveSettings={saveSettings}

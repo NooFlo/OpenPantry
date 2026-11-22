@@ -121,6 +121,11 @@ class IngredientMatchRequest(BaseModel):
     item_name: str
 
 
+class MissingMergeRequest(BaseModel):
+    key: str
+    item_id: str
+
+
 class RecipeEditIngredientRequest(BaseModel):
     id: str | None = None
     raw: str
@@ -947,6 +952,110 @@ def match_ingredient(recipe_id: str, ingredient_id: str, body: IngredientMatchRe
         numbers = re.findall(r"\d+(?:[.,]\d+)?", ingredient["raw"])
         amount = float(numbers[0].replace(",", ".")) if numbers else 1.0
     return camelize(repo.match_recipe_ingredient(recipe_id, ingredient_id, item["id"], amount))
+
+
+def _missing_ingredient_groups() -> dict[str, dict]:
+    """Ingredient rows the pantry cannot account for, grouped by the food
+    they mean. Unmatched tracked rows only: confirmed rows are user intent,
+    out-of-stock items are a shopping problem, not a matching one. Rows that
+    DO stock-resolve at read time (fresh rematch) already carry an item and
+    drop out. Grouping key: the shared catalog concept when the cascade
+    knows the food ("Trockenhefe" and "instant yeast" are both yeast), the
+    normalized cleaned name otherwise."""
+    ctx = _rematch_context()
+    groups: dict[str, dict] = {}
+    for recipe in repo.list_recipes():
+        recipe = _rematch_unconfirmed(recipe, ctx)
+        for ing in recipe.get("ingredients") or []:
+            if not ing.get("tracked") or ing.get("item_id"):
+                continue
+            raw = ing.get("raw") or ""
+            parsed = extract.parse_ingredient_line(raw)
+            name = (extract.base_ingredient_name((parsed or {}).get("name") or raw)
+                    or raw).strip()
+            concept_id = ing.get("concept_id")
+            key = f"concept:{concept_id}" if concept_id else f"name:{catalog._norm(name)}"
+            g = groups.setdefault(key, {
+                "key": key, "concept_id": concept_id, "name_counts": {},
+                "recipes": {}, "row_count": 0, "sample_raw": raw, "rows": []})
+            g["name_counts"][name] = g["name_counts"].get(name, 0) + 1
+            g["row_count"] += 1
+            g["recipes"][recipe["id"]] = recipe["title"]
+            g["rows"].append({"recipe_id": recipe["id"], "ingredient_id": ing["id"],
+                              "raw": raw, "amount": ing.get("amount"), "unit": ing.get("unit")})
+    return groups
+
+
+def _missing_groups_payload(groups: dict[str, dict]) -> list[dict]:
+    out = []
+    for g in groups.values():
+        name = max(g["name_counts"].items(), key=lambda kv: (kv[1], -len(kv[0])))[0]
+        out.append({
+            "key": g["key"],
+            "name": name,
+            "concept_id": g["concept_id"],
+            "concept_label": (catalog.CONCEPTS.get(g["concept_id"]) or {}).get("de"),
+            "recipe_count": len(g["recipes"]),
+            "row_count": g["row_count"],
+            "sample_raw": g["sample_raw"],
+            "recipes": [{"id": rid, "title": title} for rid, title in g["recipes"].items()],
+        })
+    out.sort(key=lambda g: (-g["recipe_count"], g["name"].lower()))
+    return out
+
+
+def _rewritten_raw(raw: str, item_name: str, amount, unit) -> str:
+    """Retext one ingredient line onto the merged item, keeping amounts and
+    preparation notes ("250 g Trockenhefe, aufgelöst" -> "250 g Hefe,
+    aufgelöst"). Fallback to a freshly composed line when the base name
+    cannot be located in the raw text."""
+    parsed = extract.parse_ingredient_line(raw)
+    base = ((extract.base_ingredient_name((parsed or {}).get("name") or raw) or raw)
+            or "").strip()
+    if base:
+        idx = raw.lower().find(base.lower())
+        if idx >= 0:
+            return (raw[:idx] + item_name + raw[idx + len(base):]).strip()
+    if amount is not None:
+        return f"{amount:g} {unit or ''} {item_name}".replace("  ", " ").strip()
+    return item_name
+
+
+@app.get("/api/recipes/missing-items")
+def missing_items():
+    """Settings > Missing items: every unmatched recipe ingredient, grouped
+    by food, sorted by how many recipes use it."""
+    return camelize(_missing_groups_payload(_missing_ingredient_groups()))
+
+
+@app.post("/api/recipes/missing-items/merge")
+def merge_missing_item(body: MissingMergeRequest):
+    """Merge one missing-food group into an inventory item: every recipe row
+    is relinked AND rewritten to name the item ("250 g Trockenhefe" ->
+    "250 g Hefe"). An untagged item inherits the group's concept so future
+    imports of the same food stock-match immediately."""
+    group = _missing_ingredient_groups().get(body.key)
+    if not group:
+        raise HTTPException(404, "no unmatched recipe rows for this food")
+    item = repo.get_item(body.item_id)
+    if not item:
+        raise HTTPException(404, "item not found")
+    concept_id = item.get("concept_id")
+    if not concept_id and group["concept_id"]:
+        repo.set_item_concept(item["id"], group["concept_id"])
+        concept_id = group["concept_id"]
+    updates = []
+    for row in group["rows"]:
+        updates.append({
+            "recipe_id": row["recipe_id"], "ingredient_id": row["ingredient_id"],
+            "raw": _rewritten_raw(row["raw"], item["name"], row["amount"], row["unit"]),
+            "item_id": item["id"], "concept_id": concept_id})
+    repo.merge_ingredient_rows(updates)
+    return camelize({
+        "updated": len(updates),
+        "item_name": item["name"],
+        "recipes": [{"id": rid, "title": group["recipes"][rid]} for rid in group["recipes"]],
+    })
 
 
 @app.post("/api/recipes/{recipe_id}/ingredients/{ingredient_id}/select")

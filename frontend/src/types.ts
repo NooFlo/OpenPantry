@@ -141,6 +141,26 @@ export interface Ingredient {
   selected?: boolean;
 }
 
+/** One unmatched recipe ingredient, aggregated across all recipes
+ *  (settings > Missing items). Grouped by the food: catalog concept when
+ *  the cascade knows it, normalized cleaned name otherwise. */
+export interface MissingGroup {
+  key: string;
+  name: string;
+  conceptId?: string;
+  conceptLabel?: string;
+  recipeCount: number;
+  rowCount: number;
+  sampleRaw: string;
+  recipes: { id: string; title: string }[];
+}
+
+export interface MissingMergeResult {
+  updated: number;
+  itemName: string;
+  recipes: { id: string; title: string }[];
+}
+
 /** A quantified ingredient mention in a step's text: the character span
  *  where it appears. The UI renders a live-scaled "(qty)" behind the span. */
 export interface StepLink {

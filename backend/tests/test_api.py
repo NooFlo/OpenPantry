@@ -283,6 +283,93 @@ Alles vermischen."""
     assert ing["itemId"] == created["id"]
 
 
+def test_missing_items_grouping_merge_and_concept_tagging(client):
+    """Settings > Missing items: unmatched rows grouped by food, sorted by
+    recipe count; merge relinks AND rewrites the rows onto the chosen item,
+    and an untagged item inherits the group's concept."""
+    recipe_a = repo.create_recipe(
+        "Foo A", "pasted", 2,
+        [
+            {"raw": "500 g FooBerry", "amount": 0.5, "unit": "kg", "tracked": True},
+            {"raw": "FooBerry (getrocknet)", "tracked": True},
+        ], [])
+    recipe_b = repo.create_recipe(
+        "Foo B", "pasted", 2,
+        [
+            {"raw": "FooBerry, gemahlen", "tracked": True},
+            {"raw": "2 EL BarBerry, geröstet", "tracked": True},
+            {"raw": "7 g Trockenhefe", "amount": 7, "unit": "g", "tracked": True},
+        ], [])
+    try:
+        groups = client.get("/api/recipes/missing-items").json()
+        by_key = {g["key"]: g for g in groups}
+        # unknown foods group by normalized name: FooBerry spans 2 recipes / 3 rows
+        foo = by_key["name:fooberry"]
+        assert foo["recipeCount"] == 2
+        assert foo["rowCount"] == 3
+        assert sorted(r["title"] for r in foo["recipes"]) == ["Foo A", "Foo B"]
+        assert by_key["name:barberry"]["recipeCount"] == 1
+        # known concepts group under the concept regardless of the wording
+        yeast = by_key.get("concept:yeast")
+        assert yeast and yeast["conceptId"] == "yeast"
+        # used-in-X-recipes sorting
+        keys = [g["key"] for g in groups]
+        assert keys.index("name:fooberry") < keys.index("name:barberry")
+
+        # merge with an existing item: rows relink, raw text names the item,
+        # amount and preparation notes survive
+        created = client.post(
+            "/api/items", json={"name": "FooBerry Produkt", "unit": "g"}).json()
+        result = client.post(
+            "/api/recipes/missing-items/merge",
+            json={"key": "name:fooberry", "item_id": created["id"]}).json()
+        assert result["updated"] == 3
+        recipes = {r["id"]: r for r in client.get("/api/recipes").json()}
+        raws_a = sorted(i["raw"] for i in recipes[recipe_a["id"]]["ingredients"]
+                        if i["itemId"] == created["id"])
+        assert raws_a == ["500 g FooBerry Produkt", "FooBerry Produkt (getrocknet)"]
+        raws_b = [i["raw"] for i in recipes[recipe_b["id"]]["ingredients"]
+                  if i["itemId"] == created["id"]]
+        assert raws_b == ["FooBerry Produkt, gemahlen"]
+        # the group disappeared: nothing unmatched left for this food
+        assert "name:fooberry" not in {
+            g["key"] for g in client.get("/api/recipes/missing-items").json()}
+
+        # merging a concept group tags an untagged item with the concept
+        recipe_c = repo.create_recipe(
+            "Foo C", "pasted", 2,
+            [{"raw": "200 g Gochujang", "amount": 0.2, "unit": "kg", "tracked": True}], [])
+        paste = client.post(
+            "/api/items", json={"name": "Würzpaste Testobjekt", "unit": "g"}).json()
+        assert "conceptId" not in paste or paste["conceptId"] is None
+        result = client.post(
+            "/api/recipes/missing-items/merge",
+            json={"key": "concept:gochujang", "item_id": paste["id"]}).json()
+        # >= 1: earlier tests can leave their own unresolved gochujang rows
+        # behind on the shared test database; they merge along for the ride
+        assert result["updated"] >= 1
+        assert "Foo C" in [r["title"] for r in result["recipes"]]
+        item = next(i for i in client.get("/api/items").json() if i["id"] == paste["id"])
+        assert item["conceptId"] == "gochujang"
+        recipes = {r["id"]: r for r in client.get("/api/recipes").json()}
+        goc = [i for i in recipes[recipe_c["id"]]["ingredients"]]
+        assert goc[0]["raw"] == "200 g Würzpaste Testobjekt"
+        assert goc[0]["itemId"] == paste["id"]
+
+        # unknown key or item -> 404
+        assert client.post("/api/recipes/missing-items/merge",
+                           json={"key": "name:nosuchfood", "item_id": created["id"]}).status_code == 404
+        assert client.post("/api/recipes/missing-items/merge",
+                           json={"key": "name:barberry", "item_id": "nope"}).status_code == 404
+        # clean up the items created here (test db is shared)
+        client.delete(f"/api/items/{created['id']}")
+        client.delete(f"/api/items/{paste['id']}")
+        repo.delete_recipe(recipe_c["id"])
+    finally:
+        repo.delete_recipe(recipe_a["id"])
+        repo.delete_recipe(recipe_b["id"])
+
+
 def test_health(client):
     response = client.get("/api/health")
     assert response.status_code == 200
