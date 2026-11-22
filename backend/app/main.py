@@ -860,6 +860,7 @@ def _ingredient_entry(ing: dict, canon: dict[str, str], items: list | None = Non
         concept = catalog.resolve_item_concept(item)
         if concept:
             entry["concept_id"] = concept
+        _align_amount_to_item(entry, item)
         return entry
     res = catalog.resolve_for_stock(name, items,
                                    ctx["stocked"] if ctx else None)
@@ -972,6 +973,39 @@ def match_ingredient(recipe_id: str, ingredient_id: str, body: IngredientMatchRe
         numbers = re.findall(r"\d+(?:[.,]\d+)?", ingredient["raw"])
         amount = float(numbers[0].replace(",", ".")) if numbers else 1.0
     return camelize(repo.match_recipe_ingredient(recipe_id, ingredient_id, item["id"], amount))
+
+
+def _align_amount_to_item(entry: dict, item: dict) -> dict:
+    """The import/match unit boundary, applied once per matched row.
+
+    A recipe line quantified in g/kg landing on a piece-counted item
+    becomes whole pieces via the item's `piece_weight_g` (round half
+    away from zero, at least 1); without a known piece weight the row
+    degrades to unquantified rather than guessing — the raw text keeps
+    the grams for humans either way. Like-for-like rows pass through.
+    """
+    amount = entry.get("amount")
+    if amount is None:
+        return entry
+    unit = (entry.get("unit") or "").strip().lower()
+    item_unit = (item.get("unit") or "pcs").strip().lower()
+    weight = item.get("piece_weight_g")
+    if item_unit == "pcs":
+        if unit in ("g", "kg"):
+            # mass line on a piece-counted item: convert via the piece
+            # weight; without one the row keeps its wording but no number
+            # (never guess a rate)
+            if not weight:
+                entry["amount"] = None
+                entry["unit"] = None
+            else:
+                entry["amount"] = max(1, round(amount * grams / weight))
+                entry["unit"] = "pcs"
+        return entry
+    factor = {"g": {"kg": 0.001}, "kg": {"g": 1000.0},
+              "ml": {"l": 0.001}, "l": {"ml": 1000.0}}
+    entry["amount"] = amount * factor.get(unit, {}).get(item_unit, 1.0)
+    return entry
 
 
 def _missing_ingredient_groups() -> dict[str, dict]:

@@ -43,6 +43,8 @@ export interface Item {
    *  cook. Drives the "might be running low" Yes/No prompt on Home. */
   lowProjected?: boolean;
   trackingMode: TrackingMode;
+  /** Grams per single piece — the rate recipe gram lines convert with. */
+  pieceWeightG?: number | null;
 }
 
 /** The canonical categories — chips in the pickers, order matters. */
@@ -239,6 +241,10 @@ export interface ShoppingListEntry {
   name: string;
   amount: number;
   unit: Unit;
+  /** Whole packages the buy amount rounds up to (1 = loose amount). */
+  packages?: number;
+  /** The exact requirement driving this line, in the item's unit. */
+  requirement?: number;
 }
 
 export type Tab = "home" | "inventory" | "recipes" | "plan";

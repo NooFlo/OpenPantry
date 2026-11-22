@@ -1,11 +1,11 @@
 import difflib
 import json
+import math
 import re
 import uuid
 
 from . import catalog
 from . import estimate
-from . import naming
 from . import naming
 from .db import get_db
 
@@ -289,7 +289,8 @@ def create_item(name: str, category: str = "Pantry", unit: str = "pcs",
                 package_size: float = 1.0, barcode: str | None = None,
                 tracking_mode: str = "binary", concept_id: str | None = None,
                 category_explicit: bool = False, quantity: float = 0.0,
-                generic_name: str | None = None) -> dict:
+                generic_name: str | None = None,
+                piece_weight_g: float | None = None) -> dict:
     item = {
         "id": new_id(),
         "name": name,
@@ -301,6 +302,7 @@ def create_item(name: str, category: str = "Pantry", unit: str = "pcs",
         "barcode": barcode,
         "uncertain": 0,
         "tracking_mode": tracking_mode,
+        "piece_weight_g": piece_weight_g,
     }
     if not concept_id:
         concept_id = catalog.resolve_item_concept(item)
@@ -354,7 +356,8 @@ def update_item(item_id: str, min_quantity: float | None = None,
                 name: str | None = None,
                 category: str | None = None,
                 concept_id: object = _UNSET,
-                generic_name: object = _UNSET) -> dict | None:
+                generic_name: object = _UNSET,
+                piece_weight_g: float | None | object = _UNSET) -> dict | None:
     """Patch an item. The generic name follows renames and concept changes
     while it is auto-derived; a user-curated one survives until someone
     explicitly replaces or clears it (empty string = re-derive)."""
@@ -411,6 +414,8 @@ def update_item(item_id: str, min_quantity: float | None = None,
                     _ensure_on_shopping_list(db, dict(row))
         if package_size is not None:
             db.execute("UPDATE items SET package_size = ? WHERE id = ?", (package_size, item_id))
+        if piece_weight_g is not _UNSET:
+            db.execute("UPDATE items SET piece_weight_g = ? WHERE id = ?", (piece_weight_g, item_id))
         if tracking_mode is not None:
             db.execute("UPDATE items SET tracking_mode = ? WHERE id = ?", (tracking_mode, item_id))
         if barcode is not _UNSET:
@@ -1036,8 +1041,59 @@ def _ingredient_amount(ing: dict) -> float:
     return float(numbers[0].replace(",", ".")) if numbers else 1.0
 
 
+def shopping_line(item: dict, requirement: float) -> dict | None:
+    """One item's aggregated requirement -> the shopping list line that
+    covers it.
+
+    Rounded exactly once, here: the need is the requirement minus the
+    projected stock (`estimate`, itself quantity minus what planned
+    un-cooked meals still need), and the buy `amount` is that need
+    rounded up to whole packages of `package_size`. `requirement` keeps
+    the exact unscaled need so the UI can show what was asked for.
+    """
+    estimate = item.get("estimate")
+    available = item["quantity"] if estimate is None else max(0.0, estimate)
+    missing = requirement - available
+    if missing <= 1e-9:
+        return None
+    package = item["package_size"] or 1
+    packages = max(1, math.ceil(missing / package))
+    return {
+        "item_id": item["id"],
+        "name": item["name"],
+        "amount": round(packages * package, 3),
+        "packages": packages,
+        "requirement": round(requirement, 3),
+        "unit": item["unit"],
+    }
+
+
+def stock_left(item: dict, ing: dict | None = None) -> float:
+    """Projected stock a recipe requirement is measured against: the plan
+    estimate when the item carries one, else the raw stored quantity."""
+    estimate = item.get("estimate")
+    if estimate is None:
+        return item["quantity"]
+    return max(0.0, estimate)
+
+
+def stock_left(item: dict, ing: dict | None = None) -> float:
+    """Projected stock an ingredient requirement is measured against:
+    the stored quantity minus what planned, un-cooked meals still need."""
+    estimate = item.get("estimate")
+    if estimate is not None:
+        return max(0.0, estimate)
+    return max(0.0, item["quantity"])
+
+
 def add_missing_to_shopping_list(recipe: dict, items_by_id: dict, portions: float) -> list[dict]:
+    """Every quantifiable recipe row the pantry cannot cover becomes one
+    shopping list line: requirements accumulate per item across all of the
+    recipe's rows and only then round up to whole packages — once, in
+    shopping_line()."""
     base = recipe["base_portions"] or 1
+    required: dict[str, float] = {}
+    names: dict[str, str] = {}
     with get_db() as db:
         seen_groups = set()
         for ing in recipe["ingredients"]:
@@ -1057,10 +1113,8 @@ def add_missing_to_shopping_list(recipe: dict, items_by_id: dict, portions: floa
             # a picked alternative always buys its package, amount or not
             if not group and effective["amount"] is None and not re.findall(r"\d+(?:[.,]\d+)?", effective["raw"] or ""):
                 continue
-            item = items_by_id.get(effective["item_id"]) if effective["item_id"] else None
-            if item is None and effective["item_id"]:
-                continue
             amount = _ingredient_amount(effective)
+            item = items_by_id.get(effective["item_id"]) if effective["item_id"] else None
             if item is None:
                 name = (effective["suggestion"] or effective["raw"] or "").strip()
                 if not name:
@@ -1088,11 +1142,12 @@ def add_missing_to_shopping_list(recipe: dict, items_by_id: dict, portions: floa
                     )
                 continue
             required = amount * portions / base
-            missing = required - item["quantity"]
+            missing = required - stock_left(item, ing)
             if missing <= 1e-9:
                 continue
             package = item["package_size"] or 1
             add = round(-(-missing // package) * package, 3)
+            requirement = round(required, 3)
             row = db.execute("SELECT amount FROM shopping_list WHERE item_id = ?", (item["id"],)).fetchone()
             if row:
                 db.execute("UPDATE shopping_list SET amount = amount + ? WHERE item_id = ?", (add, item["id"]))

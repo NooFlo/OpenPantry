@@ -21,6 +21,7 @@ CREATE TABLE IF NOT EXISTS items (
     tracking_mode TEXT NOT NULL DEFAULT 'binary',
     buy_amount REAL,
     auto_restock INTEGER NOT NULL DEFAULT 0,
+    piece_weight_g REAL,
     generic_name TEXT
 );
 
@@ -267,6 +268,13 @@ def init_db():
         item_columns = {row["name"] for row in db.execute("PRAGMA table_info(items)")}
         if "snooze_estimate" not in item_columns:
             db.execute("ALTER TABLE items ADD COLUMN snooze_estimate REAL")
+
+        # physical weight of one piece for pcs items (e.g. one egg ~ 60 g):
+        # the import/match boundary converts gram recipe lines into pieces
+        # with it and degrades to unquantified rows without it
+        item_columns = {row["name"] for row in db.execute("PRAGMA table_info(items)")}
+        if "piece_weight_g" not in item_columns:
+            db.execute("ALTER TABLE items ADD COLUMN piece_weight_g REAL")
 
         # generic-name backfill: every item and ingredient row gains the
         # brand-free identity the matcher compares against (deterministic;
