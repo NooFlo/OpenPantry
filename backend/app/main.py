@@ -1,6 +1,7 @@
 import logging
 import io
 import re
+import socket
 import threading
 from collections import deque
 from contextlib import asynccontextmanager
@@ -146,6 +147,9 @@ class SettingsRequest(BaseModel):
     ha_token: str | None = None
     ha_entity: str | None = None
     planning_enabled: bool | None = None
+    # Base URL baked into label QRs / consume links (phones must reach it).
+    # Empty = auto-detect the server's LAN IP.
+    label_base_url: str | None = None
 
 
 def _settings_payload() -> dict:
@@ -160,6 +164,7 @@ def _settings_payload() -> dict:
         "haEntity": hass.get_config()["entity_id"],
         "haKeySet": hass.enabled(),
         "planningEnabled": (repo.get_setting("planning_enabled", "1") != "0"),
+        "labelBaseUrl": repo.get_setting("label_base_url") or "",
     }
 
 
@@ -191,6 +196,11 @@ def update_settings(body: SettingsRequest):
         _push_to_ha()
     if body.planning_enabled is not None:
         repo.set_setting("planning_enabled", "1" if body.planning_enabled else "0")
+    if body.label_base_url is not None:
+        url = body.label_base_url.strip().rstrip("/")
+        if url and not re.match(r"https?://[\w.\-]+(\:\d+)?(/.*)?$", url):
+            raise HTTPException(400, "label base URL must be http(s)://host[:port]")
+        repo.set_setting("label_base_url", url)
     return _settings_payload()
 
 
@@ -1152,6 +1162,42 @@ def _png_response(image) -> Response:
     return Response(content=buffer.getvalue(), media_type="image/png")
 
 
+def _lan_ip() -> str | None:
+    """The host's outbound LAN IPv4, without sending a packet (the UDP
+    "connect" only makes the routing decision). None when there is no
+    route. Note for Docker deployments: this is the *container's* address
+    (172.x) — set `label_base_url` explicitly there."""
+    for target in (("8.8.8.8", 80), ("1.1.1.1", 53)):
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            sock.connect(target)
+            ip = sock.getsockname()[0]
+            if ip and not ip.startswith("127."):
+                return ip
+        except OSError:
+            continue
+        finally:
+            sock.close()
+    return None
+
+
+def _label_base_url(request: Request) -> str:
+    """Origin the label QRs point at (phones must be able to open it):
+    1. the `label_base_url` setting when filled in Settings,
+    2. else the server's own LAN IP on this request's port (auto-detect),
+    3. else whatever origin the request arrived on.
+    """
+    configured = (repo.get_setting("label_base_url") or "").strip()
+    if configured:
+        return configured.rstrip("/")
+    ip = _lan_ip()
+    if ip:
+        port = request.url.port or (443 if request.url.scheme == "https" else 80)
+        scheme = "https" if port == 443 else "http"
+        return f"{scheme}://{ip}:{port}"
+    return str(request.base_url).rstrip("/")
+
+
 class LabelDesignRequest(BaseModel):
     """Editor save: the element list (mm boxes), label width and tape. A
     missing element list starts from the tape's default preset (fresh
@@ -1253,7 +1299,7 @@ def item_custom_label_png(item_id: str, request: Request):
     if not item or not design:
         raise HTTPException(404, "no custom label for this item")
     image = labels.render_custom_label(
-        design["elements"], labels.item_label_data(item, str(request.base_url)),
+        design["elements"], labels.item_label_data(item, _label_base_url(request)),
         design["width_mm"], design.get("tape", 24))
     return _png_response(image)
 
@@ -1267,7 +1313,7 @@ def item_custom_label_preview(item_id: str, body: LabelDesignRequest, request: R
         raise HTTPException(404, "item not found")
     elements, width_mm, tape = _validated_design(body)
     image = labels.render_custom_label(
-        elements, labels.item_label_data(item, str(request.base_url)),
+        elements, labels.item_label_data(item, _label_base_url(request)),
         width_mm, tape)
     return _png_response(image)
 
@@ -1285,7 +1331,7 @@ def custom_labels_lemd(request: Request, ids: str, tape: int = 24):
         if not item or not design:
             raise HTTPException(404, f"no custom label for item: {item_id}")
         images.append(labels.render_custom_label(
-            design["elements"], labels.item_label_data(item, str(request.base_url)),
+            design["elements"], labels.item_label_data(item, _label_base_url(request)),
             design["width_mm"], design.get("tape", 24)))
     if not images:
         raise HTTPException(400, "no item ids given")

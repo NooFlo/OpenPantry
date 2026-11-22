@@ -273,6 +273,8 @@ export interface Settings {
   haEntity: string;
   haKeySet: boolean;
   planningEnabled: boolean;
+  /** Base URL baked into label QRs & consume links ("" = auto-detect LAN IP). */
+  labelBaseUrl: string;
 }
 
 export interface SettingsPatch {
@@ -285,6 +287,7 @@ export interface SettingsPatch {
   haToken?: string;
   haEntity?: string;
   planningEnabled?: boolean;
+  labelBaseUrl?: string;
 }
 
 export interface ModelList {

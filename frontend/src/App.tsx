@@ -50,6 +50,7 @@ const DEFAULT_SETTINGS: Settings = {
   haEntity: "todo.shopping_list",
   haKeySet: false,
   planningEnabled: true,
+  labelBaseUrl: "",
 };
 
 function initialTheme(): Theme {

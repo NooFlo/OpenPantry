@@ -272,6 +272,61 @@ def test_lemd_payload_schema_matches_epson():
     assert objects[0]["block_info"]["points"][1]["y"] == 2.95 + 18.1
 
 
+# ------------------------------------------------------------ QR base URL
+
+
+def test_label_base_url_setting_wins(client):
+    """A configured `label_base_url` is what QRs encode — regardless of how
+    the render request arrived (localhost, LAN IP, tunnel)."""
+    from app import main as main_module
+
+    client.put("/api/settings", json={"label_base_url": "http://192.168.178.96:8321"})
+    assert client.get("/api/settings").json()["labelBaseUrl"] == "http://192.168.178.96:8321"
+    class FakeUrl:
+        port, scheme = 8321, "http"
+
+    class FakeRequest:
+        url = FakeUrl()
+        base_url = "http://localhost:8321/"
+
+    assert main_module._label_base_url(FakeRequest()) == "http://192.168.178.96:8321"
+    # invalid URLs are rejected
+    assert client.put("/api/settings", json={"label_base_url": "not a url"}).status_code == 400
+    # clearing the setting falls through to auto-detect / request origin
+    assert client.put("/api/settings", json={"label_base_url": ""}).json()["labelBaseUrl"] == ""
+    assert main_module._label_base_url(FakeRequest()) != "http://192.168.178.96:8321"
+
+
+def test_label_base_url_auto_detects_lan_ip(client, monkeypatch):
+    from app import main as main_module
+
+    class FakeUrl:
+        port, scheme = 8321, "http"
+
+    class FakeRequest:
+        url = FakeUrl()
+        base_url = "http://testserver/"
+
+    monkeypatch.setattr(main_module, "_lan_ip", lambda: "10.0.0.55")
+    assert main_module._label_base_url(FakeRequest()) == "http://10.0.0.55:8321"
+    # no LAN route -> fall back to the request's own origin
+    monkeypatch.setattr(main_module, "_lan_ip", lambda: None)
+    assert main_module._label_base_url(FakeRequest()) == "http://testserver"
+
+
+def test_lan_ip_returns_routable_address(client):
+    """Best-effort check where the network allows it; skipped when the test
+    host has no outbound route (sandboxed CI)."""
+    from app import main as main_module
+
+    ip = main_module._lan_ip()
+    if ip is None:
+        import pytest
+
+        pytest.skip("no outbound route")
+    assert not ip.startswith("127.")
+
+
 # ------------------------------------------------------------ scanning
 
 

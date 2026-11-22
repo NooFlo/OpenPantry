@@ -141,6 +141,7 @@ export function updateSettings(patch: SettingsPatch): Promise<Settings> {
   if (patch.haToken !== undefined) body.ha_token = patch.haToken;
   if (patch.haEntity !== undefined) body.ha_entity = patch.haEntity;
   if (patch.planningEnabled !== undefined) body.planning_enabled = patch.planningEnabled;
+  if (patch.labelBaseUrl !== undefined) body.label_base_url = patch.labelBaseUrl;
   return request<Settings>("/settings", { method: "PUT", body: JSON.stringify(body) });
 }
 
