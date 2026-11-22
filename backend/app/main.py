@@ -1426,7 +1426,10 @@ def scan_item(body: ItemScanRequest):
 def _lemd_response(payload: str, filename: str) -> Response:
     return Response(
         content=payload,
-        media_type="application/json",
+        # NOT application/json: browsers append ".json" to the filename when
+        # the MIME type doesn't match the extension, and the Epson Label
+        # Editor app then fails to recognise the file as a .lemd strip
+        media_type="application/octet-stream",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
 

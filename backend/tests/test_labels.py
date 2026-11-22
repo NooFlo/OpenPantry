@@ -31,6 +31,9 @@ def _item(client, name):
 def _decode_lemd(response):
     assert response.status_code == 200
     assert response.headers["content-disposition"].endswith('.lemd"')
+    # a JSON media type would make browsers rename the download to .lemd.json
+    # and the Epson app wouldn't recognise the file type
+    assert response.headers["content-type"].startswith("application/octet-stream")
     return json.loads(response.text)
 
 
