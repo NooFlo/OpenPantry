@@ -1045,6 +1045,40 @@ def _merge_row_update(raw: str, target_name: str, amount, unit) -> tuple[str, ob
     return target_name, amount, unit
 
 
+def _rows_for_missing_key(key: str) -> tuple[list[dict], str | None]:
+    """The RECORDED rows of one missing-food key, straight from the database.
+
+    The group list (GET) shows rows the live rematch still cannot account
+    for. The merge cannot use that same recomputed snapshot: in the
+    create-then-link flow the user has just created the item, so the
+    rematch binds the group's rows to it in memory and the recomputed
+    group comes back empty ("no unmatched recipe rows"). What a merge
+    fixes is the recorded state; rows that already carry a confirmed
+    item_id stay untouched.
+    """
+    rows: list[dict] = []
+    recipes: dict[str, str] = {}
+    concept = None
+    for recipe in repo.list_recipes():
+        for ing in recipe.get("ingredients") or []:
+            if not ing.get("tracked") or ing.get("item_id"):
+                continue
+            raw = ing.get("raw") or ""
+            parsed = extract.parse_ingredient_line(raw)
+            name = (extract.base_ingredient_name((parsed or {}).get("name") or raw)
+                    or raw).strip()
+            _, _, name = extract.split_size_prefix(name)
+            cid = ing.get("concept_id") or catalog.resolve(name)[0]
+            row_key = f"concept:{cid}" if cid else f"name:{catalog._norm(name)}"
+            if row_key != key:
+                continue
+            concept = concept or cid
+            recipes[recipe["id"]] = recipe["title"]
+            rows.append({"recipe_id": recipe["id"], "ingredient_id": ing["id"],
+                         "raw": raw, "amount": ing.get("amount"), "unit": ing.get("unit")})
+    return rows, concept, recipes
+
+
 @app.get("/api/recipes/missing-items")
 def missing_items():
     """Settings > Missing items: every unmatched recipe ingredient, grouped
@@ -1058,19 +1092,19 @@ def merge_missing_item(body: MissingMergeRequest):
     is relinked AND rewritten to name the item ("250 g Trockenhefe" ->
     "250 g Hefe"). An untagged item inherits the group's concept so future
     imports of the same food stock-match immediately."""
-    group = _missing_ingredient_groups().get(body.key)
-    if not group:
+    rows, group_concept, recipe_titles = _rows_for_missing_key(body.key)
+    if not rows:
         raise HTTPException(404, "no unmatched recipe rows for this food")
     item = repo.get_item(body.item_id)
     if not item:
         raise HTTPException(404, "item not found")
     concept_id = item.get("concept_id")
-    if not concept_id and group["concept_id"]:
-        repo.set_item_concept(item["id"], group["concept_id"])
-        concept_id = group["concept_id"]
+    if not concept_id and group_concept:
+        repo.set_item_concept(item["id"], group_concept)
+        concept_id = group_concept
     target_name = (body.name or "").strip() or item["name"]
     updates = []
-    for row in group["rows"]:
+    for row in rows:
         raw, amount, unit = _merge_row_update(
             row["raw"], target_name, row["amount"], row["unit"])
         updates.append({
@@ -1081,7 +1115,7 @@ def merge_missing_item(body: MissingMergeRequest):
     return camelize({
         "updated": len(updates),
         "item_name": item["name"],
-        "recipes": [{"id": rid, "title": group["recipes"][rid]} for rid in group["recipes"]],
+        "recipes": [{"id": rid, "title": recipe_titles[rid]} for rid in recipe_titles],
     })
 
 

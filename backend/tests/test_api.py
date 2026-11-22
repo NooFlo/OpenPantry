@@ -1294,3 +1294,39 @@ def test_household_units_never_touch_stock_numbers(client):
             repo.delete_recipe(recipe["id"])
         if zimt:
             repo.delete_item(zimt["id"])
+
+
+def test_missing_merge_after_item_created_between_list_and_merge(client):
+    """The create-then-link flow: the item exists by the time the merge
+    runs, so the read-time rematch has bound the group's rows in memory
+    and a recomputed group would be empty (404 "no unmatched rows").
+    The merge must fix the RECORDED rows regardless."""
+    recipe = None
+    created = None
+    try:
+        recipe = repo.create_recipe(
+            "FooCreateFlow", "pasted", 2,
+            [{"raw": "200 g Gochujang", "amount": 0.2, "unit": "kg",
+              "tracked": True}], [])
+        groups = client.get("/api/recipes/missing-items").json()
+        assert any(g["key"] == "concept:gochujang" for g in groups)
+        # the user creates the item via the sheet, food tag prefilled --
+        # exactly what the Missing-items UI does before calling merge
+        created = client.post(
+            "/api/items", json={"name": "Gochujang Flowpaste",
+                                "concept_id": "gochujang", "quantity": 1}).json()
+        result = client.post(
+            "/api/recipes/missing-items/merge",
+            json={"key": "concept:gochujang", "item_id": created["id"],
+                  "name": "Gochujang"}).json()
+        assert result["updated"] >= 1
+        refreshed = next(r for r in client.get("/api/recipes").json()
+                         if r["title"] == "FooCreateFlow")
+        ing = refreshed["ingredients"][0]
+        assert ing["itemId"] == created["id"]
+        assert ing["raw"] == "200 g Gochujang"
+    finally:
+        if created:
+            client.delete(f"/api/items/{created['id']}")
+        if recipe:
+            repo.delete_recipe(recipe["id"])
