@@ -297,6 +297,7 @@ def scan_barcode(body: BarcodeRequest):
     item = repo.find_item_by_barcode(body.barcode)
     if not item:
         products.product_info(body.barcode)  # caches the OFF miss for the review queue
+        products.record_scan_intent(body.barcode, "consume")
         _record_scan_event("unknown:consume", body.barcode)
         raise HTTPException(404, "unknown barcode")
     _record_scan_event("consume", body.barcode)  # live UI refresh ping
@@ -326,6 +327,7 @@ def scan_purchase(body: BarcodeRequest):
     if not item:
         product = products.product_info(body.barcode)
         if not product:
+            products.record_scan_intent(body.barcode, "bought")
             _record_scan_event("unknown:bought", body.barcode)
             raise HTTPException(404, "unknown barcode")
         existing = repo.find_item_by_name(product["name"])
@@ -372,6 +374,7 @@ def scan_empty(body: BarcodeRequest):
     item = repo.find_item_by_barcode(body.barcode)
     if not item:
         products.product_info(body.barcode)  # caches the OFF miss for the review queue
+        products.record_scan_intent(body.barcode, "consume")
         _record_scan_event("unknown:consume", body.barcode)
         raise HTTPException(404, "unknown barcode")
     _record_scan_event("consume", body.barcode)  # live UI refresh ping
@@ -484,13 +487,10 @@ def discard_pending_barcode(barcode: str):
 
 
 def _last_scan_intent(barcode: str) -> str | None:
-    """Newest recorded intent for a barcode: 'bought' when the last scan was
-    a purchase scan, None otherwise (empty/consume scans stock nothing)."""
-    with _SCAN_EVENT_LOCK:
-        for event in reversed(_SCAN_EVENTS):
-            if event["barcode"] == barcode:
-                return "bought" if event["kind"] == "unknown:bought" else None
-    return None
+    """Scanned-unknown intent, persisted in the barcode cache (survives
+    restarts): 'bought' -> naming stocks a package, 'consume' -> the item
+    starts empty. Cleared once the naming consumed it."""
+    return products.scan_intent(barcode)
 
 
 @app.post("/api/barcode/assign")
@@ -529,8 +529,11 @@ def barcode_assign(body: BarcodeAssignRequest):
                 tracking_mode="qty",  # count packages: scans add +1 each
             )
     if _last_scan_intent(barcode) == "bought":
+        products.clear_scan_intent(barcode)  # naming consumed the scan
         item = repo.restock_item(item["id"], item["package_size"] or 1) or item
         _record_scan_event("bought", barcode)  # live UI refresh ping
+    else:
+        products.clear_scan_intent(barcode)
     _push_to_ha()
     return camelize(item)
 

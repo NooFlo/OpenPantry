@@ -297,6 +297,9 @@ export interface ModelList {
 
 export interface PendingBarcode {
   barcode: string;
+  /** Which scanner mode was active when this was scanned unknown:
+   *  "bought" -> naming stocks a package, "consume" -> starts empty. */
+  lastIntent?: "bought" | "consume" | null;
   /** null for OFF misses — the user names the product in the sheet. */
   name: string | null;
   /** True when Open Food Facts doesn't know this barcode at all. */

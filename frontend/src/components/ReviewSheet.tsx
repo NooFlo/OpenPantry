@@ -51,6 +51,15 @@ function EntryCard({ entry, onAssign, onRemove }: {
             <div className="item-sub">Open Food Facts doesn&apos;t know this barcode yet — type a name below</div>
           )}
           {entry.brand && <div className="item-sub">{entry.brand}</div>}
+          <div className="item-sub">
+            {entry.lastIntent === "bought" ? (
+              <>✅ Buy scan — naming stocks it +1 package</>
+            ) : entry.lastIntent === "consume" ? (
+              <>🗑️ Trash scan — naming records it as empty</>
+            ) : (
+              <>Naming records it as empty (no scan mode on file)</>
+            )}
+          </div>
           <div className="item-sub" style={{ fontFamily: "monospace" }}>
             {entry.barcode}{entry.quantity ? ` · ${entry.quantity}` : ""}
           </div>

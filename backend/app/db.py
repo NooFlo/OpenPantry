@@ -181,6 +181,12 @@ def init_db():
             "INSERT OR IGNORE INTO item_barcodes (item_id, barcode)"
             " SELECT id, barcode FROM items WHERE barcode IS NOT NULL"
         )
+        cache_columns = {row["name"] for row in db.execute("PRAGMA table_info(barcode_cache)")}
+        if "last_intent" not in cache_columns:
+            # scan provenance ("bought"/"consume"): what the mode sticker was
+            # when the barcode was scanned unknown — drives the review popup
+            # label and the stock-on-naming rule
+            db.execute("ALTER TABLE barcode_cache ADD COLUMN last_intent TEXT")
         item_columns = {row["name"] for row in db.execute("PRAGMA table_info(items)")}
         if "buy_amount" not in item_columns:
             db.execute("ALTER TABLE items ADD COLUMN buy_amount REAL")

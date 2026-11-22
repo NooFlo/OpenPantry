@@ -83,7 +83,32 @@ def _from_row(row: dict) -> dict:
         "categories": _load_categories(row["categories_json"]),
         "image_url": row["image_url"],
         "source": row["source"],
+        "last_intent": row["last_intent"],
     }
+
+
+def record_scan_intent(barcode: str, intent: str) -> None:
+    """Remember which scanner mode was active when an unknown barcode was
+    scanned ('bought' or 'consume'). Persisted with the cached product so
+    the review queue survives restarts — naming a bought scan stocks a
+    package, naming a consume scan records the item as empty."""
+    with get_db() as db:
+        db.execute("UPDATE barcode_cache SET last_intent = ? WHERE barcode = ?",
+                   (intent, barcode))
+
+
+def scan_intent(barcode: str) -> str | None:
+    with get_db() as db:
+        row = db.execute("SELECT last_intent FROM barcode_cache WHERE barcode = ?",
+                         (barcode,)).fetchone()
+    return row["last_intent"] if row else None
+
+
+def clear_scan_intent(barcode: str) -> None:
+    """The naming consumed the scan — a second assign must not stock again."""
+    with get_db() as db:
+        db.execute("UPDATE barcode_cache SET last_intent = NULL WHERE barcode = ?",
+                   (barcode,))
 
 
 def _cache_get(barcode: str) -> tuple[dict | None, bool] | None:

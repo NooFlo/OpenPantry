@@ -419,6 +419,35 @@ def test_assign_after_unknown_bought_scan_stocks_one_package(client):
     client.delete(f"/api/items/{item['id']}")
 
 
+def test_pending_entries_expose_scan_intent(client):
+    """The review queue says which scanner mode queued each barcode, so the
+    popup can tell the user what naming will do ('+1 pack' vs 'empty')."""
+    bought_code, consume_code = "4066600000107", "4066600000108"
+    assert client.post("/api/scan/purchase", json={"barcode": bought_code}).status_code == 404
+    assert client.post("/api/scan/barcode", json={"barcode": consume_code}).status_code == 404
+    entries = {e["barcode"]: e for e in client.get("/api/barcode/pending").json()["barcodes"]}
+    assert entries[bought_code]["lastIntent"] == "bought"
+    assert entries[consume_code]["lastIntent"] == "consume"
+    client.delete(f"/api/barcode/pending/{bought_code}")
+    client.delete(f"/api/barcode/pending/{consume_code}")
+
+
+def test_assign_consumes_scan_intent_no_double_stock(client):
+    """Naming burns the scan intent: a second assign can never stock a
+    second package for the same scan."""
+    code = "4066600000109"
+    assert client.post("/api/scan/purchase", json={"barcode": code}).status_code == 404
+    item = client.post("/api/barcode/assign", json={
+        "barcode": code, "item_name": "Scanfix Einzeln"}).json()
+    assert item["quantity"] == 1.0
+    other = client.post("/api/items", json={"name": "Scanfix Ziel"}).json()
+    reassigned = client.post("/api/barcode/assign", json={
+        "barcode": code, "item_id": other["id"]}).json()
+    assert reassigned["quantity"] == 0  # no second package stocked
+    client.delete(f"/api/items/{item['id']}")
+    client.delete(f"/api/items/{other['id']}")
+
+
 def test_assign_after_unknown_consume_scan_stocks_nothing(client):
     """Consume-mode unknown scans open the review queue too, but naming one
     never stocks a package — it was used up, not bought."""
