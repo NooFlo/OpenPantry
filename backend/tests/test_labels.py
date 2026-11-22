@@ -63,7 +63,9 @@ def test_custom_label_module_geometry():
             {"name": "Salz", "category": "Spices", "barcode": "",
              "qr": "http://x/c/salz", "ean": ""},
             50, tape)
-        expected_height = int(labels.TAPE_GEOMETRY[tape]["printable"] * labels.PX_PER_MM)
+        # full-tape-height canvas (LabelGenerator convention) at PX_PER_MM —
+        # only then does the .lemd width math reproduce the design width
+        expected_height = int(tape * labels.PX_PER_MM)
         assert img.height == expected_height
         assert img.width == int(50 * labels.PX_PER_MM)
         assert img.width > img.height  # horizontal label
@@ -93,8 +95,7 @@ def test_render_custom_label_fields():
     data = {"name": "Salz", "category": "Spices", "barcode": "4006434000937",
             "qr": "http://x/c/salz", "ean": "4006434000937"}
     img = labels.render_custom_label(elements, data, 50, 24)
-    assert img.size == (int(50 * labels.PX_PER_MM),
-                        int(labels.TAPE_GEOMETRY[24]["printable"] * labels.PX_PER_MM))
+    assert img.size == (int(50 * labels.PX_PER_MM), int(24 * labels.PX_PER_MM))
     qr_variant = labels.render_custom_label(elements, data, 50, 24, qr_instead_of_ean=True)
     assert qr_variant.size == img.size
 
@@ -245,6 +246,24 @@ def test_control_codes_lemd_download(client):
 def test_control_codes_lemd_qr_format(client):
     payload = _decode_lemd(client.get("/api/labels/control-codes.lemd?tape=24&format=qr"))
     assert len(payload["object_list"]) == 3
+
+
+def test_lemd_object_width_equals_design_width():
+    """Regression: the printable-only canvas made the .lemd place a 50 mm
+    design as a 24/18.1 = 66.3 mm object, so the Epson app shrank the label
+    (thin, unfilled edges). With the full-tape canvas the placed width must
+    be the design width, exactly."""
+    image = labels.render_custom_label(labels.default_elements(24),
+                                       {"name": "Salz", "category": "",
+                                        "barcode": "", "qr": "http://x/c/salz",
+                                        "ean": ""}, 50, 24)
+    payload = json.loads(labels.generate_lemd([image], 24))
+    points = payload["object_list"][0]["block_info"]["points"]
+    placed_width = points[1]["x"] - points[0]["x"]
+    assert abs(placed_width - 50.0) < 0.2, placed_width
+    # and the content sits inside the printable strip (top offset 2.95 mm)
+    assert points[0]["y"] == 2.95
+    assert points[1]["y"] == round(2.95 + 18.1, 2)
 
 
 # ------------------------------------------------------------ Epson export

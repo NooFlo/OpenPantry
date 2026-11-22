@@ -40,7 +40,10 @@ TAPE_GEOMETRY = {
     12: {"printable": 9.878, "top": 0.92},
     24: {"printable": 18.1, "top": 2.95},
 }
-PX_PER_MM = 12  # label raster density (matches LabelGenerator's cut marks)
+# Label raster density. Must match LabelGenerator's effective export density
+# (rendered at 10 px/mm, then Resvg fitTo width*3 = 30 px/mm) — at 12 px/mm
+# the strips print visibly coarser after Epson's threshold dithering.
+PX_PER_MM = 30
 PT_PER_MM = 0.352778  # 1 pt = 1/72 inch
 
 # Element fields available in the editor toolbox. "qr"/"ean" are graphics
@@ -212,16 +215,21 @@ def control_label_data(control: str) -> dict:
 def render_custom_label(elements: list[dict], data: dict,
                         width_mm: float = 50, tape_mm: int = 24,
                         qr_instead_of_ean: bool = False) -> Image.Image:
-    """Render one custom label design: white canvas of (width_mm × tape
-    printable height) with each element placed at its mm offset. QR boxes
-    stay square inside their box; EAN graphics scale into theirs (the
-    print-sticker toggle can swap them for QRs of the same digits)."""
+    """Render one custom label design onto a canvas spanning the FULL tape
+    height (12/24 mm) — LabelGenerator's convention (its renderLabelToPng
+    passes heightMm = full tape). The .lemd width math (tape × image aspect)
+    only reproduces the design width exactly with a full-tape bitmap: a
+    printable-strip-only canvas made objects 24/18.1 = 1.33x too wide, and
+    the Epson app shrank the content to compensate — thin labels with
+    unfilled edges. Element y coordinates stay printable-relative (0..printable)
+    and are shifted down by the tape's top offset; boxes are mm at PX_PER_MM."""
     tape = tape_mm if tape_mm in TAPE_GEOMETRY else 24
     try:
         width = max(10.0, min(300.0, float(width_mm or 50)))
     except (TypeError, ValueError):
         width = 50.0
-    height_px = int(TAPE_GEOMETRY[tape]["printable"] * PX_PER_MM)
+    height_px = int(tape * PX_PER_MM)
+    top_px = TAPE_GEOMETRY[tape]["top"] * PX_PER_MM
     canvas = _new_canvas(height_px, int(width * PX_PER_MM))
     for element in elements or []:
         if not isinstance(element, dict):
@@ -236,7 +244,8 @@ def render_custom_label(elements: list[dict], data: dict,
             h = float(element.get("h") or 5)
         except (TypeError, ValueError):
             continue
-        box_x, box_y = int(x * PX_PER_MM), int(y * PX_PER_MM)
+        box_x = int(x * PX_PER_MM)
+        box_y = int(top_px + y * PX_PER_MM)
         box_w, box_h = max(1, int(w * PX_PER_MM)), max(1, int(h * PX_PER_MM))
         if field == "qr":
             content = data.get("qr") or ""
@@ -271,12 +280,15 @@ def default_elements(tape_mm: int = 24) -> list[dict]:
 
 def _dashed_cut_line(height_mm: float) -> Image.Image:
     """Vertical dashed line between labels; coarse dashes survive Epson's
-    threshold dithering (LabelGenerator finding)."""
+    threshold dithering (LabelGenerator finding). Geometry was tuned at
+    12 px/mm — scale the pattern with the raster density."""
     height_px = int(height_mm * PX_PER_MM)
-    img = _new_canvas(height_px, 32)
+    scale = PX_PER_MM / 12
+    img = _new_canvas(height_px, int(32 * scale))
     draw = ImageDraw.Draw(img)
-    for y in range(0, height_px, 25):
-        draw.rectangle([13, y, 19, min(y + 15, height_px)], fill="black")
+    for y in range(0, height_px, int(25 * scale)):
+        draw.rectangle([int(13 * scale), y, int(19 * scale),
+                        min(y + int(15 * scale), height_px)], fill="black")
     return img
 
 
