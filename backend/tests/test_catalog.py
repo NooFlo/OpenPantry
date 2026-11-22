@@ -241,6 +241,54 @@ def test_standardize_is_idempotent(client):
     assert not second["dropped"]
 
 
+def test_unmatched_follow_live_stock(client):
+    """Staleness regression: a row resolved as "buy Hefe" at import time
+    (no Hefe in stock then) must follow the stock and match once Hefe is
+    stocked — without waiting for a standardize run."""
+    text = "Pizzateig\n2 g instant yeast\n500 g Mehl\nKneten."
+    recipe = client.post("/api/recipes/import",
+                         json={"kind": "text", "value": text}).json()
+    yeast = next(i for i in recipe["ingredients"] if "yeast" in i["raw"])
+    assert yeast["itemId"] is None
+    assert yeast["suggestion"] == "Hefe"
+    # stock appears *after* the import — the stale snapshot on disk stays
+    item = client.post("/api/items", json={
+        "name": "Hefe", "category": "Baking", "unit": "g",
+        "quantity": 63, "package_size": 7}).json()
+    assert item["conceptId"] == "yeast"
+    recipes = client.get("/api/recipes").json()
+    recipe = next(r for r in recipes if r["id"] == recipe["id"])
+    yeast = next(i for i in recipe["ingredients"] if "yeast" in i["raw"])
+    assert yeast["itemId"] == item["id"]  # now matched, no DB rewrite
+    assert yeast["suggestion"] is None
+    # cooking after the rematch deducts the stocked Hefe, not nothing
+    used = yeast["amount"]  # kg-normalized ("2 g" -> 0.002 kg)
+    client.post(f"/api/recipes/{recipe['id']}/cook",
+                json={"portions": recipe["basePortions"]})
+    after = client.get("/api/items").json()
+    hefe = next(i for i in after if i["id"] == item["id"])
+    assert abs(hefe["quantity"] - (63 - used)) < 0.001
+    client.delete(f"/api/items/{item['id']}")
+
+
+def test_confirmed_rows_survive_live_rematch(client):
+    """User intent is sacred: a row confirmed to a specific item never
+    gets re-wired by the live rematch, even when the item is unusual."""
+    text = "Nudelauflauf\n200 g Spaghetti\n100 g naturjoghurt\nBacken."
+    recipe = client.post("/api/recipes/import",
+                         json={"kind": "text", "value": text}).json()
+    spaghetti = next(i for i in recipe["ingredients"] if "Spaghetti" in i["raw"])
+    # user deliberately maps spaghetti onto Mehl
+    client.post(f"/api/recipes/{recipe['id']}/ingredients/{spaghetti['id']}/match",
+                json={"item_name": "Mehl"})
+    recipes = client.get("/api/recipes").json()
+    recipe = next(r for r in recipes if r["id"] == recipe["id"])
+    spaghetti = next(i for i in recipe["ingredients"] if "Spaghetti" in i["raw"])
+    mehl_id = client.get("/api/items").json()
+    mehl_id = next(i["id"] for i in mehl_id if i["name"] == "Mehl")
+    assert spaghetti["itemId"] == mehl_id  # untouched by the rematch
+
+
 # ------------------------------------------------- manual create/edit
 def test_manual_create_and_tag_editing(client):
     # full-attribute manual creation: concept auto-resolves from the name,

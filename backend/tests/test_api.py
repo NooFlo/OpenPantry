@@ -117,8 +117,8 @@ def test_add_missing_matches_suggestions_and_creates_items(client):
         "pasted",
         2,
         [
-            {"raw": "500 g beef mince", "amount": 0.5, "unit": "kg",
-             "tracked": True, "suggestion": "beef mince"},
+            {"raw": "200 g Gochujang", "amount": 0.2, "unit": "kg",
+             "tracked": True, "suggestion": "Gochujang"},
             {"raw": "4 Eier", "amount": 4, "unit": "pcs", "item_id": items["Eier"]["id"], "tracked": True},
             {"raw": "1 l Milch", "amount": 1, "unit": "l", "item_id": items["Milch"]["id"], "tracked": True},
             {"raw": "sea salt, to season"},
@@ -129,28 +129,35 @@ def test_add_missing_matches_suggestions_and_creates_items(client):
     before = {e["itemId"]: e["amount"] for e in client.get("/api/shopping-list").json()}
     result = client.post(f"/api/recipes/{recipe['id']}/add-missing", json={"portions": 2}).json()
     by_name = {e["name"]: e["amount"] - before.get(e["itemId"], 0) for e in result}
-    # suggestion had no pantry item: new item created with zero stock, full rounded amount added
-    assert by_name["beef mince"] == pytest.approx(1)  # 0.5 missing, package size 1 -> 1 kg
+    # suggestion had no pantry item: new item created with zero stock, full rounded
+    # amount added. (Before the live rematch the stored suggestion was taken as-is;
+    # now the catalog resolves the row first — Gochujang is a known concept with
+    # nothing stocked, so the buy name "Gochujang" still comes out on top. "beef
+    # mince" used to test this but the rematch now matches the seeded Hackfleisch.)
+    assert by_name["Gochujang"] == pytest.approx(1)  # 0.2 missing, package size 1 -> 1 kg
     assert by_name["Eier"] == pytest.approx(10)  # 8 needed, 3 in stock -> one pack of 10
     assert by_name["Milch"] == pytest.approx(1)  # 1 needed, 0.4 in stock -> one 1 l pack
     # non-quantifiable and in-stock items are not on the list
     assert "sea salt, to season" not in by_name
     assert "Mehl" not in by_name
 
-    created = next(i for i in client.get("/api/items").json() if i["name"] == "beef mince")
+    created = next(i for i in client.get("/api/items").json() if i["name"] == "Gochujang")
     assert created["quantity"] == 0
     # the suggestion was accepted and persisted on the ingredient
     refreshed = next(r for r in client.get("/api/recipes").json() if r["id"] == recipe["id"])
-    beef = next(i for i in refreshed["ingredients"] if "beef mince" in i["raw"].lower())
+    beef = next(i for i in refreshed["ingredients"] if "gochujang" in i["raw"].lower())
     assert beef["itemId"] == created["id"]
     assert beef["suggestion"] is None
     # a second call merges into the same entries instead of duplicating;
-    # beef mince is binary-tracked, so the single buy is not stacked again
+    # Gochujang is binary-tracked, so the single buy is not stacked again
     result = client.post(f"/api/recipes/{recipe['id']}/add-missing", json={"portions": 2}).json()
     names = [e["name"] for e in result]
-    assert names.count("beef mince") == 1
-    beef_entry = next(e for e in result if e["name"] == "beef mince")
+    assert names.count("Gochujang") == 1
+    beef_entry = next(e for e in result if e["name"] == "Gochujang")
     assert beef_entry["amount"] == pytest.approx(1)
+    # clean up so other tests can create a Gochujang of their own
+    client.delete(f"/api/shopping-list/{created['id']}")
+    client.delete(f"/api/items/{created['id']}")
 
 
 def test_receipt_match_creates_item_and_completes(client):

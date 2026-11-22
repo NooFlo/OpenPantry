@@ -923,11 +923,13 @@ def is_prepared_reference(raw: str, name: str) -> bool:
     return bool(PREPARED_REF_RE.search(hay))
 
 
-def resolve_for_stock(name: str, items) -> dict:
+def resolve_for_stock(name: str, items, stocked: dict | None = None) -> dict:
     """Full ranked cascade for one cleaned ingredient name against the
     live item list. Result (never raises):
       concept, cleaned, kind, item_id, item_name, note, buy_name
     kind: identity|variant|in_blend|sibling|components|buy|staple|unknown
+    STOCKED is an optional precomputed stock_map(items) — pass it when
+    resolving many names against the same item list.
     """
     concept, cleaned = resolve(name)
     result = {"concept": concept, "cleaned": cleaned, "kind": "unknown",
@@ -940,7 +942,8 @@ def resolve_for_stock(name: str, items) -> dict:
     if concept == "water":
         result["kind"] = "staple"
         return result
-    stocked = stock_map(items)
+    if stocked is None:
+        stocked = stock_map(items)
 
     def _pick(entries):
         return entries[0] if entries else None

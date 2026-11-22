@@ -673,9 +673,61 @@ def match_receipt_item(receipt_id: str, item_id: str, body: ReceiptMatchRequest)
     return camelize(receipt)
 
 
+def _rematch_context() -> dict:
+    """One stock snapshot for a read-time rematch: the live items, an
+    exact-name map and a concept stock map — so a whole recipe list can
+    re-resolve without a DB query per ingredient row."""
+    items = repo.list_items()
+    by_name: dict[str, dict] = {}
+    for item in items:
+        by_name.setdefault(item["name"].lower(), item)
+    return {"items": items, "by_name": by_name, "stocked": catalog.stock_map(items)}
+
+
+def _rematch_unconfirmed(recipe: dict, ctx: dict) -> dict:
+    """Freshen unmatched ingredient rows IN MEMORY, no DB writes.
+
+    Match state is written once at import (or by /api/catalog/standardize);
+    stock moves on — a row that was resolved as "buy Hefe" keeps claiming
+    Hefe is missing even after nine packs are scanned. The rematch re-runs
+    the cascade for every tracked row *without* an item, so recipes follow
+    the stock automatically. Sacred rows: confirmed items (item_id set,
+    user intent) and untracked rows (water, prepared refs, junk).
+    """
+    for ing in recipe.get("ingredients") or []:
+        if not ing.get("tracked") or ing.get("item_id"):
+            continue
+        raw = ing.get("raw") or ""
+        parsed = extract.parse_ingredient_line(raw)
+        name = (extract.base_ingredient_name((parsed or {}).get("name") or raw)
+                or raw)
+        fresh = _ingredient_entry(
+            {"name": name, "raw": raw, "amount": ing.get("amount"),
+             "unit": ing.get("unit")}, {}, ctx["items"], ctx)
+        if fresh is None or fresh.get("tracked") is False:
+            continue  # junk / prepared refs / staples: standardize owns them
+        if fresh.get("item_id"):
+            ing["item_id"] = fresh["item_id"]
+            if fresh.get("concept_id"):
+                ing["concept_id"] = fresh["concept_id"]
+            ing["suggestion"] = None
+            ing["substitute_kind"] = None
+            ing["substitute_note"] = fresh.get("substitute_note") or None
+        else:
+            ing["concept_id"] = fresh.get("concept_id")
+            ing["suggestion"] = fresh.get("suggestion")
+            ing["substitute_kind"] = fresh.get("substitute_kind")
+            ing["substitute_note"] = fresh.get("substitute_note")
+    return recipe
+
+
 @app.get("/api/recipes")
 def get_recipes():
-    return camelize(repo.list_recipes())
+    # unmatched rows follow the live stock: state on disk is a snapshot
+    # from import/standardize time and goes stale as items are added,
+    # tagged, stocked or deleted
+    ctx = _rematch_context()
+    return camelize([_rematch_unconfirmed(r, ctx) for r in repo.list_recipes()])
 
 
 @app.post("/api/recipes/import")
@@ -733,7 +785,8 @@ def _canonical_names(data: dict, choice: dict | None, cloud: dict | None) -> dic
 ALWAYS_AVAILABLE = {"water", "wasser"}
 
 
-def _ingredient_entry(ing: dict, canon: dict[str, str], items: list | None = None) -> dict | None:
+def _ingredient_entry(ing: dict, canon: dict[str, str], items: list | None = None,
+                     ctx: dict | None = None) -> dict | None:
     """One imported ingredient line -> its pantry row.
 
     Junk (equipment, page noise) is dropped by returning None; references
@@ -757,15 +810,18 @@ def _ingredient_entry(ing: dict, canon: dict[str, str], items: list | None = Non
         return entry
     items = items if items is not None else repo.list_items()
     # an exact item of the same name always wins (user-created names are
-    # the strongest possible signal)
-    item = repo.find_item_by_name(name)
+    # the strongest possible signal). CTX carries a precomputed exact-name
+    # map and stock map so a read-time rematch needs no per-row DB query.
+    item = (ctx["by_name"].get(name.lower()) if ctx
+            else repo.find_item_by_name(name))
     if item:
         entry["item_id"] = item["id"]
         concept = catalog.resolve_item_concept(item)
         if concept:
             entry["concept_id"] = concept
         return entry
-    res = catalog.resolve_for_stock(name, items)
+    res = catalog.resolve_for_stock(name, items,
+                                   ctx["stocked"] if ctx else None)
     if res["concept"]:
         entry["concept_id"] = res["concept"]
     if res["kind"] == "staple":
@@ -845,6 +901,7 @@ def _get_recipe_or_404(recipe_id: str) -> dict:
 @app.post("/api/recipes/{recipe_id}/cook")
 def cook(recipe_id: str, body: CookRequest):
     recipe = _get_recipe_or_404(recipe_id)
+    recipe = _rematch_unconfirmed(recipe, _rematch_context())
     result = camelize(repo.cook_recipe(recipe, body.portions))
     _push_to_ha()
     return result
@@ -853,6 +910,7 @@ def cook(recipe_id: str, body: CookRequest):
 @app.post("/api/recipes/{recipe_id}/add-missing")
 def add_missing(recipe_id: str, body: CookRequest):
     recipe = _get_recipe_or_404(recipe_id)
+    recipe = _rematch_unconfirmed(recipe, _rematch_context())
     items_by_id = {i["id"]: i for i in repo.list_items()}
     result = camelize(repo.add_missing_to_shopping_list(recipe, items_by_id, body.portions))
     _push_to_ha()
