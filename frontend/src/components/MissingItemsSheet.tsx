@@ -87,7 +87,8 @@ export default function MissingItemsSheet({ items, categories, onMerge, onCreate
     g.recipeCount === 1 ? "1 recipe" : `${g.recipeCount} recipes`;
 
   return (
-    <Sheet onClose={onClose}>
+    <>
+      <Sheet onClose={onClose}>
       {selected == null ? (
         <>
           <h2 className="sheet-title">Missing items</h2>
@@ -172,6 +173,11 @@ export default function MissingItemsSheet({ items, categories, onMerge, onCreate
         </>
       )}
 
+      </Sheet>
+
+      {/* sibling, not a child: inside the parent sheet a transform would
+          re-anchor this fixed-position overlay onto the sheet's own box,
+          squeezing it into the popup */}
       {createOpen && selected && (
         <AddItemSheet
           onAddItem={createAndMerge}
@@ -181,6 +187,6 @@ export default function MissingItemsSheet({ items, categories, onMerge, onCreate
           initialConcept={selected.conceptId && selected.conceptLabel ? { id: selected.conceptId, label: selected.conceptLabel } : null}
         />
       )}
-    </Sheet>
+    </>
   );
 }
