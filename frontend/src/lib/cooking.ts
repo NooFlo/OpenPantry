@@ -40,10 +40,16 @@ export function maxPortions(recipe: Recipe, items: Item[]): number {
       max = Math.min(max, groupCap);
       continue;
     }
-    if (!ing.itemId || ing.amount == null) return 0;
+    if (!ing.itemId) return 0;
     const item = items.find((i) => i.id === ing.itemId);
     if (!item) return 0;
     if (isBinary(item)) {
+      if (isInStock(item)) continue;
+      return 0;
+    }
+    if (ing.amount == null) {
+      // bare-name row: no portion math possible — stocked means unlimited,
+      // empty blocks the recipe (mirrors memberCapacity/ingredientInStock)
       if (isInStock(item)) continue;
       return 0;
     }
@@ -77,7 +83,7 @@ export function missingCount(recipe: Recipe, items: Item[], portions: number): n
       continue;
     }
     const item = ing.itemId ? items.find((i) => i.id === ing.itemId) : undefined;
-    const ok = item != null && ing.amount != null && ingredientInStock(ing, recipe, portions, item);
+    const ok = item != null && ingredientInStock(ing, recipe, portions, item);
     if (!ok) count += 1;
   }
   return count;
@@ -91,9 +97,12 @@ export function missingAmount(ing: Ingredient, recipe: Recipe, portions: number,
 
 /** Ingredient satisfied against the item's stock level, honoring its
  *  tracking mode: binary items only need to be in stock, qty items are
- *  compared against the exact recipe amount. */
+ *  compared against the exact recipe amount. Rows without an amount
+ *  ("Weizenmehl (Type 550)" typed as a bare name) behave like binary
+ *  items: stocked is satisfied, empty is missing. */
 export function ingredientInStock(ing: Ingredient, recipe: Recipe, portions: number, item: Item): boolean {
   if (isBinary(item)) return isInStock(item);
+  if (ing.amount == null) return isInStock(item);
   return missingAmount(ing, recipe, portions, item) <= 1e-9;
 }
 
