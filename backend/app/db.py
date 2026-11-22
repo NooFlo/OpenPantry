@@ -103,6 +103,25 @@ CREATE TABLE IF NOT EXISTS item_barcodes (
     item_id TEXT NOT NULL REFERENCES items(id) ON DELETE CASCADE
 );
 
+-- Custom label designs (drag-and-drop editor, LabelGenerator-style):
+-- one per inventory item (linked to exactly that item) plus one per
+-- scanner control-code sticker (bought / trash). Deleting the item
+-- deletes its design.
+CREATE TABLE IF NOT EXISTS custom_labels (
+    id TEXT PRIMARY KEY,
+    item_id TEXT REFERENCES items(id) ON DELETE CASCADE,
+    control TEXT,
+    layout_json TEXT NOT NULL DEFAULT '[]',
+    width_mm REAL NOT NULL DEFAULT 50,
+    tape INTEGER NOT NULL DEFAULT 24,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE UNIQUE INDEX IF NOT EXISTS ux_custom_labels_item
+    ON custom_labels(item_id) WHERE item_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS ux_custom_labels_control
+    ON custom_labels(control) WHERE control IS NOT NULL;
+
 CREATE TABLE IF NOT EXISTS plan_persons (
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL

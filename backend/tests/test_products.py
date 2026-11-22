@@ -235,8 +235,11 @@ def test_control_codes_page_renders_svgs(client):
     response = client.get("/print/control-codes")
     assert response.status_code == 200
     body = response.text
-    assert "BOUGHT" in body and "EMPTY / TRASH" in body and "CONSUME" in body
-    assert body.count("<svg") == 6  # EAN + QR variants
+    # two codes only: BOUGHT switches to restock mode, TRASH back to the
+    # default consume mode (trash *is* consume — no third sticker)
+    assert "BOUGHT" in body and "TRASH" in body
+    assert "CONSUME" not in body and "EMPTY" not in body
+    assert body.count("<svg") == 4  # EAN + QR variants
     for meta in CONTROL_CODES.values():
         assert meta["code"] in body
 

@@ -296,9 +296,12 @@ def scan_barcode(body: BarcodeRequest):
 
 # Control-code stickers for the USB scanner: scan one of these EAN-13 codes in
 # the GS1 in-store reserved range (20xxxxxxxxxx — no real product can collide)
-# to switch what subsequent product scans do. GET /print/control-codes renders
+# to switch what subsequent product scans do. Two codes only: BOUGHT switches
+# to restock mode, TRASH switches back to the default consume mode (scan
+# deducts one package) — trash *is* consume. GET /print/control-codes renders
 # them as printable barcodes; constants live in labels.py (single source of
-# truth for the scanner bridge, the print page and the Epson label export).
+# truth for the scanner bridge, the print page, the Epson label export and the
+# editable sticker designs).
 CONTROL_CODES = labels.CONTROL_CODES
 
 
@@ -352,15 +355,18 @@ def scan_purchase(body: BarcodeRequest):
 
 @app.post("/api/scan/empty")
 def scan_empty(body: BarcodeRequest):
+    """Kept for older wedge-bridge configs: TRASH *is* consume now (scan
+    deducts one package), so this endpoint behaves exactly like the
+    default scan. Point the Rock5 bridge's trash mode at /api/scan/barcode
+    and this becomes dead code."""
     item = repo.find_item_by_barcode(body.barcode)
     if not item:
         products.product_info(body.barcode)  # caches the OFF miss for the review queue
-        _record_scan_event("unknown:empty", body.barcode)
+        _record_scan_event("unknown:consume", body.barcode)
         raise HTTPException(404, "unknown barcode")
-    item = repo.empty_item(item["id"])
-    _record_scan_event("empty", body.barcode)  # live UI refresh ping
+    _record_scan_event("consume", body.barcode)  # live UI refresh ping
     _push_to_ha()
-    return camelize(item)
+    return camelize(repo.consume_item(item["id"], item["package_size"]))
 
 
 @app.get("/print/control-codes", response_class=HTMLResponse)
@@ -423,8 +429,7 @@ digits — print whichever your scanner reads and keep it next to the scanner.</
 <li>Print this page (sticker paper or card stock, laminated works best) and keep it next to the scanner.</li>
 <li>Scan one control code to switch the scanner mode — it stays active until another control code is scanned.</li>
 <li><b>Unpacking groceries:</b> scan BOUGHT once, then scan each product. Unknown products land in the review queue with their Open Food Facts data.</li>
-<li><b>Throwing packaging away:</b> scan EMPTY, then the product — stock goes to zero and it's re-ordered.</li>
-<li>Scan CONSUME to return to the default (package used up/cooking).</li>
+<li><b>Throwing packaging away:</b> scan TRASH, then the products — each scan deducts one package (the same as the default mode).</li>
 </ol>
 </body></html>"""
 
@@ -1141,38 +1146,216 @@ def tag_empty(item_id: str):
     return f"{item['name']}: empty — added to the shopping list."
 
 
-@app.get("/api/labels/item/{item_id}/png")
-def item_label_png(item_id: str, request: Request, tape: int = 24):
-    """Label preview PNG: QR (consume link) + name (+ product barcode on 24 mm)."""
-    item = repo.get_item(item_id)
-    if not item:
-        raise HTTPException(404, "item not found")
-    image = labels.item_label(item, str(request.base_url), tape)
+def _png_response(image) -> Response:
     buffer = io.BytesIO()
     image.save(buffer, format="PNG")
     return Response(content=buffer.getvalue(), media_type="image/png")
 
 
-@app.get("/api/labels/items.lemd")
-def item_labels_lemd(request: Request, ids: str, tape: int = 24):
-    """Epson Label Editor mobile strip for inventory labels ('Ids' comma-
-    separated); separated by dashed cut marks, imported in the Epson app."""
+class LabelDesignRequest(BaseModel):
+    """Editor save: the element list (mm boxes), label width and tape. A
+    missing element list starts from the tape's default preset (fresh
+    'Create custom label' checkbox)."""
+    elements: list[dict] | None = None
+    widthMm: float = 50
+    tape: int = 24
+
+
+def _validated_tape(tape: int) -> int:
+    return tape if tape in labels.TAPE_GEOMETRY else 24
+
+
+def _num(value, default: float, low: float | None = None,
+         high: float | None = None) -> float:
+    """Coerce an element field to a sane number — the editor sends trusted
+    data, but a stale bookmark or manual API call must not 500 the save."""
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return default
+    if low is not None:
+        number = max(low, number)
+    if high is not None:
+        number = min(high, number)
+    return number
+
+
+def _validated_design(body: LabelDesignRequest) -> tuple[list[dict], float, int]:
+    elements = body.elements if body.elements is not None else labels.default_elements(body.tape)
+    if len(elements) > 60:
+        raise HTTPException(400, "too many label elements")
+    clean = []
+    for el in elements:
+        if not isinstance(el, dict):
+            continue
+        font_pt = _num(el.get("fontSizePt"), 10, 0, 300)
+        clean.append({
+            "id": str(el.get("id") or f"el{len(clean)}"),
+            "field": str(el.get("field") or "text").lower(),
+            "x": _num(el.get("x"), 0, -50, 300), "y": _num(el.get("y"), 0, -50, 100),
+            "w": _num(el.get("w"), 10, 0.1, 300), "h": _num(el.get("h"), 5, 0.1, 100),
+            "fontSizePt": font_pt,
+            "text": str(el.get("text") or "")[:200],
+        })
+    return clean, max(10.0, min(300.0, _num(body.widthMm, 50))), _validated_tape(body.tape)
+
+
+@app.get("/api/labels/control-codes")
+def get_control_codes():
+    """The scanner control-code set for the frontend (single source of truth:
+    labels.py feeds the bridge, the print page, the stickers and this API)."""
+    return camelize([
+        {"key": key, "code": meta["code"], "label": meta["label"],
+         "hint": meta["hint"]}
+        for key, meta in labels.CONTROL_CODES.items()
+    ])
+
+
+# ------------------------------------------------- per-item custom label designs
+
+@app.get("/api/labels/custom")
+def list_custom_labels():
+    """All items with a custom label, most recently added first."""
+    return camelize(repo.list_item_custom_labels())
+
+
+@app.get("/api/labels/custom/item/{item_id}")
+def get_item_custom_label(item_id: str):
+    design = repo.get_item_custom_label(item_id)
+    if not design:
+        raise HTTPException(404, "no custom label for this item")
+    return camelize(design)
+
+
+@app.put("/api/labels/custom/item/{item_id}")
+def put_item_custom_label(item_id: str, body: LabelDesignRequest):
+    item = repo.get_item(item_id)
+    if not item:
+        raise HTTPException(404, "item not found")
+    elements, width_mm, tape = _validated_design(body)
+    design = repo.save_item_custom_label(item_id, elements, width_mm, tape)
+    return camelize(design)
+
+
+@app.delete("/api/labels/custom/item/{item_id}")
+def delete_item_custom_label(item_id: str):
+    deleted = repo.delete_item_custom_label(item_id)
+    if not deleted:
+        raise HTTPException(404, "no custom label for this item")
+    return {"deleted": True}
+
+
+@app.get("/api/labels/custom/item/{item_id}/png")
+def item_custom_label_png(item_id: str, request: Request):
+    """Rendered PNG of the saved design (list thumbnails, single prints)."""
+    item = repo.get_item(item_id)
+    design = repo.get_item_custom_label(item_id)
+    if not item or not design:
+        raise HTTPException(404, "no custom label for this item")
+    image = labels.render_custom_label(
+        design["elements"], labels.item_label_data(item, str(request.base_url)),
+        design["width_mm"], design.get("tape", 24))
+    return _png_response(image)
+
+
+@app.post("/api/labels/preview/item/{item_id}")
+def item_custom_label_preview(item_id: str, body: LabelDesignRequest, request: Request):
+    """Unsaved-work preview for the editor: render the work-in-progress
+    layout against the item's real data without persisting anything."""
+    item = repo.get_item(item_id)
+    if not item:
+        raise HTTPException(404, "item not found")
+    elements, width_mm, tape = _validated_design(body)
+    image = labels.render_custom_label(
+        elements, labels.item_label_data(item, str(request.base_url)),
+        width_mm, tape)
+    return _png_response(image)
+
+
+@app.get("/api/labels/custom.lemd")
+def custom_labels_lemd(request: Request, ids: str, tape: int = 24):
+    """Epson Label Editor mobile strip over the *saved* designs of the
+    given items ('ids' comma-separated), separated by dashed cut marks —
+    the batch print of the Barcodes page."""
+    tape = _validated_tape(tape)
     images = []
     for item_id in [part.strip() for part in ids.split(",") if part.strip()]:
         item = repo.get_item(item_id)
-        if not item:
-            raise HTTPException(404, f"item not found: {item_id}")
-        images.append(labels.item_label(item, str(request.base_url), tape))
+        design = repo.get_item_custom_label(item_id)
+        if not item or not design:
+            raise HTTPException(404, f"no custom label for item: {item_id}")
+        images.append(labels.render_custom_label(
+            design["elements"], labels.item_label_data(item, str(request.base_url)),
+            design["width_mm"], design.get("tape", 24)))
     if not images:
         raise HTTPException(400, "no item ids given")
-    return _lemd_response(labels.generate_lemd(images, tape), "openpantry-labels.lemd")
+    return _lemd_response(labels.generate_lemd(images, tape), "openpantry-custom-labels.lemd")
+
+
+# ---------------------------------------------- control-code sticker designs
+
+def _control_or_404(control: str) -> str:
+    if control not in labels.CONTROL_CODES:
+        raise HTTPException(404, "unknown control code")
+    return control
+
+
+def _control_design(control: str) -> dict:
+    """Saved sticker design, or LabelGenerator's default caption + code
+    graphic when the user hasn't customized it yet."""
+    design = repo.get_control_custom_label(control)
+    if design:
+        return design
+    return {"elements": [dict(el) for el in labels.DEFAULT_CONTROL_LAYOUT],
+            "width_mm": 50, "tape": 24, "control": control}
+
+
+@app.get("/api/labels/custom/control/{control}")
+def get_control_custom_label(control: str):
+    control = _control_or_404(control)
+    return camelize(_control_design(control))
+
+
+@app.put("/api/labels/custom/control/{control}")
+def put_control_custom_label(control: str, body: LabelDesignRequest):
+    control = _control_or_404(control)
+    elements, width_mm, tape = _validated_design(body)
+    design = repo.save_control_custom_label(control, elements, width_mm, tape)
+    return camelize(design)
+
+
+@app.post("/api/labels/preview/control/{control}")
+def control_custom_label_preview(control: str, body: LabelDesignRequest):
+    control = _control_or_404(control)
+    elements, width_mm, tape = _validated_design(body)
+    image = labels.render_custom_label(
+        elements, labels.control_label_data(control), width_mm, tape)
+    return _png_response(image)
+
+
+@app.get("/api/labels/custom/control/{control}/png")
+def control_custom_label_png(control: str):
+    control = _control_or_404(control)
+    design = _control_design(control)
+    image = labels.render_custom_label(
+        design["elements"], labels.control_label_data(control),
+        design["width_mm"], design.get("tape", 24))
+    return _png_response(image)
 
 
 @app.get("/api/labels/control-codes.lemd")
 def control_codes_lemd(request: Request, tape: int = 24, format: str = "ean"):
-    """Epson strip with the three scanner control-code stickers; format=qr
-    renders QR codes of the same digits (2D-only scanners)."""
-    images = [img for img, _, _ in labels.control_code_labels(tape, qr=format == "qr")]
+    """Epson strip with the two scanner control-code stickers (their saved
+    custom designs when present); format=qr swaps EAN graphics for QR codes
+    of the same digits (2D-only scanners)."""
+    tape = _validated_tape(tape)
+    images = []
+    for control in labels.CONTROL_CODES:
+        design = _control_design(control)
+        images.append(labels.render_custom_label(
+            design["elements"], labels.control_label_data(control),
+            design["width_mm"], design.get("tape", 24),
+            qr_instead_of_ean=format == "qr"))
     if not images:
         raise HTTPException(500, "control codes could not be rendered")
     return _lemd_response(labels.generate_lemd(images, tape), "openpantry-control-codes.lemd")

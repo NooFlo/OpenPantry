@@ -196,3 +196,13 @@ export function IconX(props: IconProps) {
     </Svg>
   );
 }
+
+/** Price-tag shape — the custom label editor. */
+export function IconTag(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <path d="M12.6 3H21v8.4L11.4 21a2 2 0 0 1-2.8 0l-5.6-5.6a2 2 0 0 1 0-2.8Z" />
+      <circle cx="16.8" cy="7.2" r="1.3" fill="currentColor" stroke="none" />
+    </Svg>
+  );
+}

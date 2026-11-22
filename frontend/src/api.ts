@@ -1,4 +1,4 @@
-import type { Item, ItemCreatePayload, ItemPatch, ModelList, PendingBarcode, PlanShoppingEntry, Receipt, Recipe, RecipeEditPatch, Settings, SettingsPatch, ShoppingListEntry, WeekPlan } from "./types";
+import type { ControlCodeInfo, CustomLabelDesign, CustomLabelInfo, Item, ItemCreatePayload, ItemPatch, ModelList, PendingBarcode, PlanShoppingEntry, Receipt, Recipe, RecipeEditPatch, Settings, SettingsPatch, ShoppingListEntry, WeekPlan } from "./types";
 
 const BASE = "/api";
 
@@ -256,3 +256,78 @@ export function fetchScanEvents(since: number): Promise<{ seq: number; events: S
 export function discardPendingBarcode(barcode: string): Promise<{ discarded: string }> {
   return request(`/barcode/pending/${barcode}`, { method: "DELETE" });
 }
+
+// --------------------------------------------------------------- custom labels
+// Per-item label designs (drag-and-drop editor) plus the editable
+// BOUGHT/TRASH control-code stickers and their Epson exports.
+
+/** Get a saved design payload for the API (elements omitted = "create with
+ *  the tape's default preset" — the Create-custom-label checkbox). */
+export function labelDesignPayload(design: Partial<CustomLabelDesign>) {
+  return {
+    elements: design.elements ?? null,
+    widthMm: design.widthMm ?? 50,
+    tape: design.tape ?? 24,
+  };
+}
+
+export function fetchCustomLabelInfos(): Promise<CustomLabelInfo[]> {
+  return request<CustomLabelInfo[]>("/labels/custom");
+}
+
+export function fetchItemCustomLabel(itemId: string): Promise<CustomLabelDesign> {
+  return request<CustomLabelDesign>(`/labels/custom/item/${itemId}`);
+}
+
+export function saveItemCustomLabel(
+  itemId: string,
+  design: Partial<CustomLabelDesign>
+): Promise<CustomLabelDesign> {
+  return request<CustomLabelDesign>(`/labels/custom/item/${itemId}`, {
+    method: "PUT",
+    body: JSON.stringify(labelDesignPayload(design)),
+  });
+}
+
+export function deleteItemCustomLabel(itemId: string): Promise<{ deleted: boolean }> {
+  return request(`/labels/custom/item/${itemId}`, { method: "DELETE" });
+}
+
+export function fetchControlCustomLabel(control: string): Promise<CustomLabelDesign> {
+  return request<CustomLabelDesign>(`/labels/custom/control/${control}`);
+}
+
+export function saveControlCustomLabel(
+  control: string,
+  design: Partial<CustomLabelDesign>
+): Promise<CustomLabelDesign> {
+  return request<CustomLabelDesign>(`/labels/custom/control/${control}`, {
+    method: "PUT",
+    body: JSON.stringify(labelDesignPayload(design)),
+  });
+}
+
+export function fetchControlCodes(): Promise<ControlCodeInfo[]> {
+  return request<ControlCodeInfo[]>("/labels/control-codes");
+}
+
+/** Live WYSIWYG preview of (unsaved) editor state, rendered by the backend
+ *  with the exact print pipeline. Returns an object URL for an <img src>. */
+export async function fetchLabelPreviewUrl(
+  target: { kind: "item"; itemId: string } | { kind: "control"; control: string },
+  design: CustomLabelDesign
+): Promise<string> {
+  const path = target.kind === "item"
+    ? `/labels/preview/item/${target.itemId}`
+    : `/labels/preview/control/${target.control}`;
+  const response = await fetch(BASE + path, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(labelDesignPayload(design)),
+  });
+  if (!response.ok) throw new Error(`label preview -> ${response.status}`);
+  return URL.createObjectURL(await response.blob());
+}
+
+export const customLabelPngUrl = (itemId: string) => `/api/labels/custom/item/${itemId}/png`;
+export const controlPngUrl = (control: string) => `/api/labels/custom/control/${control}/png`;

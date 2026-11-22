@@ -1,18 +1,24 @@
-import { useMemo, useState } from "react";
-import type { Item, ItemCreatePayload, ItemPatch, ModelList, Receipt, Settings, SettingsPatch } from "../types";
-import { IconBarcode, IconGear, IconInventory, IconMinus, IconPlus, IconReceipt, IconSearch } from "../components/Icons";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import type { ControlCodeInfo, CustomLabelInfo, Item, ItemCreatePayload, ItemPatch, ModelList, Receipt, Settings, SettingsPatch } from "../types";
+import {
+  deleteItemCustomLabel,
+  fetchCustomLabelInfos,
+  saveItemCustomLabel,
+} from "../api";
+import { IconBarcode, IconGear, IconInventory, IconMinus, IconPlus, IconReceipt, IconSearch, IconTag } from "../components/Icons";
 import Sheet from "../components/Sheet";
 import AlarmSheet, { ItemSettings } from "../components/AlarmSheet";
 import ThemeToggle from "../components/ThemeToggle";
 import ModelSettingsSheet from "../components/ModelSettingsSheet";
-import LabelsSheet from "../components/LabelsSheet";
+import BarcodesView from "../components/BarcodesView";
+import LabelEditor, { type LabelEditorTarget } from "../components/LabelEditor";
 import AddItemSheet from "../components/AddItemSheet";
 import NfcLinkBlock from "../components/NfcLinkBlock";
 import ReceiptsView from "./ReceiptsView";
 import { useMediaQuery } from "../lib/useMediaQuery";
 import { formatStock, isBinary, isLow, isInStock, stepAmount } from "../lib/tracking";
 
-type View = "items" | "receipts";
+type View = "items" | "receipts" | "barcodes";
 
 /** Sub line of an item's detail header: the primary EAN, or a count when the
  *  item carries several product barcodes. */
@@ -47,10 +53,54 @@ export default function InventoryScreen({ items, receipts, onConsume, onRestock,
   const [confirmDeleteFor, setConfirmDeleteFor] = useState<string | null>(null);
   const [alarmsOpen, setAlarmsOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [labelsOpen, setLabelsOpen] = useState(false);
   const [addItemOpen, setAddItemOpen] = useState(false);
   const [view, setView] = useState<View>("items");
+  const [customLabels, setCustomLabels] = useState<CustomLabelInfo[]>([]);
+  const [labelEditorFor, setLabelEditorFor] = useState<LabelEditorTarget | null>(null);
   const twoPane = useMediaQuery("(min-width: 1180px)");
+
+  const refreshCustomLabels = useCallback(() => {
+    return fetchCustomLabelInfos()
+      .then(setCustomLabels)
+      .catch(() => { /* backend briefly away */ });
+  }, []);
+
+  useEffect(() => {
+    refreshCustomLabels();
+  }, [refreshCustomLabels]);
+
+  /** The "Create custom label" checkbox: checking it links a default design
+   *  to exactly this item; unchecking deletes it (user decision). */
+  const toggleCustomLabel = async (item: Item, enabled: boolean) => {
+    try {
+      if (enabled) {
+        await saveItemCustomLabel(item.id, { tape: 24, widthMm: 50 });
+      } else {
+        await deleteItemCustomLabel(item.id);
+      }
+      await refreshCustomLabels();
+    } catch {
+      /* backend briefly away — checkbox state stays stale until next refresh */
+    }
+  };
+
+  const hasCustomLabel = (itemId: string): boolean =>
+    customLabels.some((entry) => entry.itemId === itemId);
+
+  const editItemLabel = (item: Item) => {
+    setAlarmsOpen(false);
+    setLabelEditorFor({ kind: "item", item });
+  };
+
+  const editControlLabel = (control: ControlCodeInfo) => {
+    setLabelEditorFor({ kind: "control", control });
+  };
+
+  const closeLabelEditor = () => setLabelEditorFor(null);
+
+  const labelEditorSaved = () => {
+    refreshCustomLabels();
+  };
 
   const categories = useMemo(() => [...new Set(items.map((i) => i.category))], [items]);
 
@@ -169,6 +219,12 @@ export default function InventoryScreen({ items, receipts, onConsume, onRestock,
         <button className="btn btn-ghost" onClick={() => setSelected(null)}>
           Close
         </button>
+        {hasCustomLabel(selectedLive.id) && (
+          <button className="btn btn-ghost" onClick={() => editItemLabel(selectedLive)}>
+            <IconTag size={16} />
+            Edit label
+          </button>
+        )}
         {isBinary(selectedLive) ? (
           isInStock(selectedLive) ? (
             <button
@@ -238,7 +294,10 @@ export default function InventoryScreen({ items, receipts, onConsume, onRestock,
       {twoPane && (
         <div className="detail-settings">
           <ItemSettings item={selectedLive} onUpdate={onUpdateItem}
-                        onAddBarcode={onAddItemBarcode} onRemoveBarcode={onRemoveItemBarcode} />
+                        onAddBarcode={onAddItemBarcode} onRemoveBarcode={onRemoveItemBarcode}
+                        hasCustomLabel={hasCustomLabel(selectedLive.id)}
+                        onToggleCustomLabel={toggleCustomLabel}
+                        onEditCustomLabel={editItemLabel} />
         </div>
       )}
     </>
@@ -247,25 +306,39 @@ export default function InventoryScreen({ items, receipts, onConsume, onRestock,
   return (
     <div className="screen">
       <header className="screen-header">
-        <h1 className="screen-title">{view === "items" ? "Inventory" : "Receipts"}</h1>
+        <h1 className="screen-title">
+          {view === "items" ? "Inventory" : view === "receipts" ? "Receipts" : "Labels & barcodes"}
+        </h1>
         <div className="header-actions">
-          <button
-            className="btn btn-ghost btn-sm"
-            onClick={() => setView(view === "items" ? "receipts" : "items")}
-            title={view === "items" ? "Show the receipt inbox" : "Back to the item list"}
-          >
-            {view === "items" ? (
-              <>
-                <IconReceipt size={15} />
-                Receipts
-              </>
-            ) : (
-              <>
-                <IconInventory size={15} />
-                Items
-              </>
-            )}
-          </button>
+          {view !== "barcodes" && (
+            <button
+              className="btn btn-ghost btn-sm"
+              onClick={() => setView(view === "items" ? "receipts" : "items")}
+              title={view === "items" ? "Show the receipt inbox" : "Back to the item list"}
+            >
+              {view === "items" ? (
+                <>
+                  <IconReceipt size={15} />
+                  Receipts
+                </>
+              ) : (
+                <>
+                  <IconInventory size={15} />
+                  Items
+                </>
+              )}
+            </button>
+          )}
+          {view === "barcodes" && (
+            <button
+              className="btn btn-ghost btn-sm"
+              onClick={() => setView("items")}
+              title="Back to the item list"
+            >
+              <IconInventory size={15} />
+              Items
+            </button>
+          )}
           {view === "receipts" && (
             <button className="icon-btn" onClick={() => setSettingsOpen(true)} aria-label="Model settings">
               <IconGear size={19} />
@@ -276,7 +349,12 @@ export default function InventoryScreen({ items, receipts, onConsume, onRestock,
               <button className="icon-btn" onClick={() => setAddItemOpen(true)} aria-label="Add item manually" title="Add item">
                 <IconPlus size={19} />
               </button>
-              <button className="icon-btn" onClick={() => setLabelsOpen(true)} aria-label="Labels and barcodes">
+              <button
+                className="icon-btn"
+                onClick={() => setView("barcodes")}
+                aria-label="Labels and barcodes"
+                title="Labels & barcodes"
+              >
                 <IconBarcode size={19} />
               </button>
             </>
@@ -287,6 +365,13 @@ export default function InventoryScreen({ items, receipts, onConsume, onRestock,
 
       {view === "receipts" ? (
         <ReceiptsView receipts={receipts} onMatchItem={onMatchItem} />
+      ) : view === "barcodes" ? (
+        <BarcodesView
+          items={items}
+          customLabels={customLabels}
+          onEditItemLabel={editItemLabel}
+          onEditControlLabel={editControlLabel}
+        />
       ) : twoPane ? (
         <div className="split">
           <div className="split-master">{itemsPane}</div>
@@ -317,6 +402,9 @@ export default function InventoryScreen({ items, receipts, onConsume, onRestock,
           onUpdate={onUpdateItem}
           onAddBarcode={onAddItemBarcode}
           onRemoveBarcode={onRemoveItemBarcode}
+          hasCustomLabel={hasCustomLabel(selectedLive.id)}
+          onToggleCustomLabel={toggleCustomLabel}
+          onEditCustomLabel={editItemLabel}
           onClose={() => setAlarmsOpen(false)}
         />
       )}
@@ -336,11 +424,11 @@ export default function InventoryScreen({ items, receipts, onConsume, onRestock,
         <AddItemSheet onAddItem={onAddItem} onClose={() => setAddItemOpen(false)} />
       )}
 
-      {labelsOpen && (
-        <LabelsSheet
-          items={items}
-          selected={selectedLive}
-          onClose={() => setLabelsOpen(false)}
+      {labelEditorFor && (
+        <LabelEditor
+          target={labelEditorFor}
+          onClose={closeLabelEditor}
+          onSaved={labelEditorSaved}
         />
       )}
     </div>

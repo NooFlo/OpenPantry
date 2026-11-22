@@ -30,40 +30,218 @@ def _item(client, name):
 
 def _decode_lemd(response):
     assert response.status_code == 200
-    assert response.headers["content-disposition"].endswith(".lemd\"")
+    assert response.headers["content-disposition"].endswith('.lemd"')
     return json.loads(response.text)
 
 
 # ---------------------------------------------------------------- rendering
 
 
-def test_item_label_png(client):
-    salz = _item(client, "Salz")
-    response = client.get(f"/api/labels/item/{salz['id']}/png?tape=24")
-    assert response.status_code == 200
-    assert response.headers["content-type"] == "image/png"
-    assert response.content[:8] == b"\x89PNG\r\n\x1a\n"
-    assert len(response.content) > 5000
+def test_control_codes_are_bought_and_trash_only():
+    """TRASH *is* consume (deducts one package) — no third sticker."""
+    assert set(labels.CONTROL_CODES) == {"bought", "trash"}
+    assert labels.CONTROL_CODES["bought"]["code"] == "2000000000008"
+    assert labels.CONTROL_CODES["trash"]["code"] == "2000000000015"
+    from app.main import CONTROL_CODES
+
+    assert CONTROL_CODES is labels.CONTROL_CODES
 
 
-def test_item_label_png_404(client):
-    assert client.get("/api/labels/item/missing/png").status_code == 404
+def test_control_codes_api_lists_both(client):
+    codes = client.get("/api/labels/control-codes").json()
+    assert {c["key"] for c in codes} == {"bought", "trash"}
+    assert all(c["code"].startswith("20") and c["hint"] for c in codes)
 
 
-def test_label_module_geometry():
-    item = {"id": "salz", "name": "Salz", "barcode": "4006434000937"}
+def test_custom_label_module_geometry():
     for tape in (12, 24):
-        img = labels.item_label(item, "http://192.168.178.96:8321", tape)
+        img = labels.render_custom_label(
+            labels.default_elements(tape),
+            {"name": "Salz", "category": "Spices", "barcode": "",
+             "qr": "http://x/c/salz", "ean": ""},
+            50, tape)
         expected_height = int(labels.TAPE_GEOMETRY[tape]["printable"] * labels.PX_PER_MM)
         assert img.height == expected_height
-        assert img.width > img.height  # horizontal QR + text layout
+        assert img.width == int(50 * labels.PX_PER_MM)
+        assert img.width > img.height  # horizontal label
 
 
-def test_control_code_labels_render_all_three():
-    for tape in (12, 24):
-        rendered = labels.control_code_labels(tape)
-        assert len(rendered) == 3
-        assert {label for _, label, _ in rendered} == {"BOUGHT", "EMPTY / TRASH", "CONSUME"}
+def test_presets_skip_gridfinity():
+    """LabelGenerator's Gridfinity preset is intentionally not carried over."""
+    assert set(labels.PRESETS) == {"mm12", "mm24", "storage24"}
+    for preset in labels.PRESETS.values():
+        assert preset["tape"] in labels.TAPE_GEOMETRY
+        assert preset["elements"], "preset must have elements"
+        for element in preset["elements"]:
+            assert element["field"] in labels.LABEL_FIELDS
+
+
+def test_render_custom_label_fields():
+    elements = [
+        {"id": "n", "field": "name", "x": 1, "y": 1, "w": 20, "h": 6,
+         "fontSizePt": 20, "text": ""},
+        {"id": "t", "field": "text", "x": 1, "y": 8, "w": 20, "h": 4,
+         "fontSizePt": 8, "text": "hint"},
+        {"id": "q", "field": "qr", "x": 40, "y": 1, "w": 8, "h": 8,
+         "fontSizePt": 0, "text": ""},
+        {"id": "e", "field": "ean", "x": 40, "y": 10, "w": 8, "h": 6,
+         "fontSizePt": 0, "text": ""},
+    ]
+    data = {"name": "Salz", "category": "Spices", "barcode": "4006434000937",
+            "qr": "http://x/c/salz", "ean": "4006434000937"}
+    img = labels.render_custom_label(elements, data, 50, 24)
+    assert img.size == (int(50 * labels.PX_PER_MM),
+                        int(labels.TAPE_GEOMETRY[24]["printable"] * labels.PX_PER_MM))
+    qr_variant = labels.render_custom_label(elements, data, 50, 24, qr_instead_of_ean=True)
+    assert qr_variant.size == img.size
+
+
+def test_render_skips_unresolvable_fields():
+    """An empty value (no barcode on the item) renders nothing for its box."""
+    elements = [{"id": "e", "field": "ean", "x": 1, "y": 1, "w": 10, "h": 6,
+                 "fontSizePt": 0, "text": ""}]
+    img = labels.render_custom_label(elements, {"qr": "", "ean": ""}, 50, 24)
+    assert img.size[0] > 0  # does not raise
+
+
+# ------------------------------------------------------ item design lifecycle
+
+
+def test_item_custom_label_roundtrip(client):
+    salz = _item(client, "Salz")
+    assert client.get(f"/api/labels/custom/item/{salz['id']}").status_code == 404
+
+    # checkbox flow: PUT without elements starts from the tape's default preset
+    created = client.put(f"/api/labels/custom/item/{salz['id']}",
+                         json={"widthMm": 50, "tape": 24}).json()
+    assert created["tape"] == 24
+    assert created["widthMm"] == 50
+    assert len(created["elements"]) >= 2
+    assert {el["field"] for el in created["elements"]} == {"name", "qr"}
+    assert created["createdAt"]
+
+    # list shows the item as having a custom label
+    listing = client.get("/api/labels/custom").json()
+    assert any(entry["itemId"] == salz["id"] for entry in listing)
+
+    # editor save: full element list replaces the design, creation date keeps
+    edited = client.put(
+        f"/api/labels/custom/item/{salz['id']}",
+        json={"tape": 12, "widthMm": 60, "elements": [
+            {"id": "n", "field": "name", "x": 1, "y": 0.5, "w": 40, "h": 8,
+             "fontSizePt": 16, "text": ""},
+            {"id": "c", "field": "category", "x": 1, "y": None, "w": "wide",
+             "h": 3, "fontSizePt": 8, "text": ""},
+        ]}).json()
+    assert edited["tape"] == 12
+    assert edited["widthMm"] == 60
+    # junk values are cleaned up, not stored raw
+    cleaned = {el["id"]: el for el in edited["elements"]}
+    assert cleaned["c"]["y"] == 0
+    assert cleaned["c"]["w"] == 10
+
+    # preview PNG renders the unsaved work-in-progress as well
+    preview = client.post(
+        f"/api/labels/preview/item/{salz['id']}",
+        json={"tape": 24, "widthMm": 50, "elements": [
+            {"id": "n", "field": "name", "x": 1, "y": 1, "w": 30, "h": 10,
+             "fontSizePt": 30, "text": ""}]})
+    assert preview.status_code == 200
+    assert preview.headers["content-type"] == "image/png"
+    assert preview.content[:8] == b"\x89PNG\r\n\x1a\n"
+
+    # saved-design PNG + delete (unchecking "Create custom label")
+    png = client.get(f"/api/labels/custom/item/{salz['id']}/png")
+    assert png.status_code == 200
+    assert png.headers["content-type"] == "image/png"
+    assert client.delete(f"/api/labels/custom/item/{salz['id']}").json() == {"deleted": True}
+    assert client.get(f"/api/labels/custom/item/{salz['id']}").status_code == 404
+
+
+def test_item_custom_label_unknown_item(client):
+    assert client.put("/api/labels/custom/item/missing",
+                      json={"widthMm": 50, "tape": 24}).status_code == 404
+    assert client.get("/api/labels/custom/item/missing/png").status_code == 404
+
+
+def test_custom_labels_sorted_by_most_recently_added(client):
+    listing = client.get("/api/labels/custom").json()
+    eier, milch = _item(client, "Eier"), _item(client, "Milch")
+    client.put(f"/api/labels/custom/item/{eier['id']}", json={"widthMm": 50, "tape": 24})
+    client.put(f"/api/labels/custom/item/{milch['id']}", json={"widthMm": 50, "tape": 24})
+    client.delete(f"/api/labels/custom/item/{eier['id']}")
+    client.put(f"/api/labels/custom/item/{eier['id']}", json={"widthMm": 50, "tape": 24})
+    # Eier's design was created last -> first in the list despite name order
+    listing = client.get("/api/labels/custom").json()
+    ids = [entry["itemId"] for entry in listing]
+    assert ids.index(eier["id"]) < ids.index(milch["id"])
+    client.delete(f"/api/labels/custom/item/{milch['id']}")
+    client.delete(f"/api/labels/custom/item/{eier['id']}")
+
+
+def test_custom_labels_lemd_strip(client):
+    salz, milch = _item(client, "Salz"), _item(client, "Milch")
+    for item in (salz, milch):
+        client.put(f"/api/labels/custom/item/{item['id']}", json={"widthMm": 50, "tape": 12})
+    try:
+        payload = _decode_lemd(
+            client.get(f"/api/labels/custom.lemd?ids={salz['id']},{milch['id']}&tape=12"))
+        assert payload["tape_config"]["width"] == 12
+        assert len(payload["object_list"]) == 3  # 2 labels + 1 dashed cut line
+        # items without a design don't break the batch -> 404 names them
+        assert client.get("/api/labels/custom.lemd?ids=missing").status_code == 404
+        assert client.get("/api/labels/custom.lemd?ids=").status_code == 400
+    finally:
+        for item in (salz, milch):
+            client.delete(f"/api/labels/custom/item/{item['id']}")
+
+
+# ------------------------------------------------------------ control designs
+
+
+def test_control_design_default_falls_back(client):
+    fallback = client.get("/api/labels/custom/control/bought").json()
+    assert fallback["control"] == "bought"
+    assert {el["field"] for el in fallback["elements"]} == {"name", "ean"}
+    assert client.get("/api/labels/custom/control/nope").status_code == 404
+
+
+def test_control_design_save_and_render(client):
+    design = client.put(
+        "/api/labels/custom/control/trash",
+        json={"tape": 24, "widthMm": 55, "elements": [
+            {"id": "cap", "field": "name", "x": 1, "y": 1, "w": 25, "h": 7,
+             "fontSizePt": 16, "text": ""},
+            {"id": "code", "field": "ean", "x": 1, "y": 9, "w": 50, "h": 8,
+             "fontSizePt": 0, "text": ""},
+        ]}).json()
+    assert design["control"] == "trash"
+    saved = client.get("/api/labels/custom/control/trash").json()
+    assert len(saved["elements"]) == 2
+    png = client.get("/api/labels/custom/control/trash/png")
+    assert png.status_code == 200 and png.headers["content-type"] == "image/png"
+    preview = client.post("/api/labels/preview/control/bought",
+                          json={"tape": 24, "widthMm": 50, "elements": [
+                              {"id": "cap", "field": "name", "x": 1, "y": 1,
+                               "w": 20, "h": 6, "fontSizePt": 14, "text": ""}]})
+    assert preview.status_code == 200
+    # clean up so later assertions see the default sticker design again
+    from app import repo
+
+    with repo.get_db() as db:
+        db.execute("DELETE FROM custom_labels WHERE control = 'trash'")
+
+
+def test_control_codes_lemd_download(client):
+    payload = _decode_lemd(client.get("/api/labels/control-codes.lemd?tape=24"))
+    # 2 control labels + 1 dashed cut line between them
+    assert len(payload["object_list"]) == 3
+    assert payload["tape_config"]["width"] == 24
+
+
+def test_control_codes_lemd_qr_format(client):
+    payload = _decode_lemd(client.get("/api/labels/control-codes.lemd?tape=24&format=qr"))
+    assert len(payload["object_list"]) == 3
 
 
 # ------------------------------------------------------------ Epson export
@@ -71,9 +249,11 @@ def test_control_code_labels_render_all_three():
 
 def test_lemd_payload_schema_matches_epson():
     """Structure mirrors LabelGenerator's lemd-generator constants."""
-    item = {"id": "salz", "name": "Salz", "barcode": None}
-    images = [labels.item_label(item, "http://x", 24)] * 2
-    payload = json.loads(labels.generate_lemd(images, 24))
+    image = labels.render_custom_label(
+        labels.default_elements(24),
+        {"name": "Salz", "category": "", "barcode": "", "qr": "http://x/c/salz",
+         "ean": ""}, 50, 24)
+    payload = json.loads(labels.generate_lemd([image] * 2, 24))
 
     assert payload["version"] == "1.2.0"
     assert payload["signature"] == "Epson Label Editor mobile layout data"
@@ -92,21 +272,30 @@ def test_lemd_payload_schema_matches_epson():
     assert objects[0]["block_info"]["points"][1]["y"] == 2.95 + 18.1
 
 
-def test_control_codes_lemd_download(client):
-    payload = _decode_lemd(client.get("/api/labels/control-codes.lemd?tape=24"))
-    # 3 control labels + 2 dashed cut lines between them
-    assert len(payload["object_list"]) == 5
-    assert payload["tape_config"]["width"] == 24
+# ------------------------------------------------------------ scanning
 
 
-def test_items_lemd_download(client):
-    salz = _item(client, "Salz")
-    milch = _item(client, "Milch")
-    payload = _decode_lemd(
-        client.get(f"/api/labels/items.lemd?ids={salz['id']},{milch['id']}&tape=12"))
-    assert payload["tape_config"]["width"] == 12
-    assert len(payload["object_list"]) == 3  # 2 labels + 1 cut line
-    assert client.get("/api/labels/items.lemd?ids=").status_code == 400
+def test_scan_empty_endpoint_now_consumes(client):
+    """TRASH *is* consume: the legacy empty-scan route deducts one package
+    instead of zeroing the item (the bridge should point trash mode at
+    /api/scan/barcode; this stays only as a compatibility alias)."""
+    probe = client.post(
+        "/api/barcode/assign",
+        json={"barcode": "4012345678902", "item_name": "Trashprobe"}).json()
+    client.post("/api/scan/purchase", json={"barcode": "4012345678902"})
+    client.post("/api/scan/purchase", json={"barcode": "4012345678902"})
+    before = next(i for i in client.get("/api/items").json()
+                  if i["name"] == "Trashprobe")["quantity"]
+    response = client.post("/api/scan/empty", json={"barcode": "4012345678902"})
+    assert response.status_code == 200
+    after = response.json()["quantity"]
+    assert before - after == _package_size(client, "Trashprobe")
+    client.delete(f"/api/items/{probe['id']}")
+
+
+def _package_size(client, name):
+    return next(i for i in client.get("/api/items").json()
+                if i["name"] == name)["packageSize"]
 
 
 # ------------------------------------------------------- barcode adjustment
@@ -147,20 +336,6 @@ def test_clear_item_barcode(client):
         f"/api/items/{_item(client, 'Eier')['id']}/update", json={"barcode": ""})
     assert response.status_code == 200
     assert response.json()["barcode"] is None
-
-
-def test_control_codes_still_importable(client):
-    """labels.py is the single source of truth for main.py's sticker page."""
-    from app.main import CONTROL_CODES
-
-    assert CONTROL_CODES is labels.CONTROL_CODES
-    assert CONTROL_CODES["bought"]["code"] == "2000000000008"
-
-
-def test_control_code_labels_qr_variant():
-    assert len(labels.control_code_labels(24, qr=False)) == 3
-    assert len(labels.control_code_labels(24, qr=True)) == 3
-    assert len(labels.control_code_labels(12, qr=True)) == 3
 
 
 def test_scan_item_endpoint(client):

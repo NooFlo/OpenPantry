@@ -139,6 +139,97 @@ def set_item_barcode(item_id: str, barcode: str) -> dict | None:
     return add_item_barcode(item_id, barcode)
 
 
+# ------------------------------------------------------------------ custom labels
+# Drag-and-drop label designs in the LabelGenerator style: one per item
+# (linked to exactly that item via the "Create custom label" checkbox) and
+# one per scanner control code (bought / trash). Elements are stored as a
+# JSON blob of absolutely positioned mm boxes.
+
+
+def _label_out(row) -> dict:
+    label = dict(row)
+    try:
+        elements = json.loads(label.pop("layout_json") or "[]")
+    except (ValueError, TypeError):
+        elements = []
+    label["elements"] = elements if isinstance(elements, list) else []
+    return label
+
+
+def get_item_custom_label(item_id: str) -> dict | None:
+    with get_db() as db:
+        row = db.execute(
+            "SELECT * FROM custom_labels WHERE item_id = ?", (item_id,)).fetchone()
+    return _label_out(row) if row else None
+
+
+def save_item_custom_label(item_id: str, elements: list[dict],
+                           width_mm: float = 50, tape: int = 24) -> dict | None:
+    """Upsert the item's design. created_at survives edits (the list is
+    sorted by most recently added); updated_at tracks design changes."""
+    with get_db() as db:
+        if not db.execute("SELECT 1 FROM items WHERE id = ?", (item_id,)).fetchone():
+            return None
+        existing = db.execute(
+            "SELECT id FROM custom_labels WHERE item_id = ?", (item_id,)).fetchone()
+        if existing:
+            db.execute(
+                "UPDATE custom_labels SET layout_json = ?, width_mm = ?, tape = ?,"
+                " updated_at = datetime('now') WHERE item_id = ?",
+                (json.dumps(elements), width_mm, tape, item_id),
+            )
+        else:
+            db.execute(
+                "INSERT INTO custom_labels (id, item_id, layout_json, width_mm, tape)"
+                " VALUES (?, ?, ?, ?, ?)",
+                (new_id(), item_id, json.dumps(elements), width_mm, tape),
+            )
+    return get_item_custom_label(item_id)
+
+
+def delete_item_custom_label(item_id: str) -> bool:
+    with get_db() as db:
+        cursor = db.execute("DELETE FROM custom_labels WHERE item_id = ?", (item_id,))
+        return cursor.rowcount > 0
+
+
+def list_item_custom_labels() -> list[dict]:
+    """Items with a custom label, most recently added first."""
+    with get_db() as db:
+        rows = db.execute(
+            "SELECT item_id, created_at, updated_at FROM custom_labels"
+            " WHERE item_id IS NOT NULL ORDER BY created_at DESC, updated_at DESC"
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def get_control_custom_label(control: str) -> dict | None:
+    with get_db() as db:
+        row = db.execute(
+            "SELECT * FROM custom_labels WHERE control = ?", (control,)).fetchone()
+    return _label_out(row) if row else None
+
+
+def save_control_custom_label(control: str, elements: list[dict],
+                              width_mm: float = 50, tape: int = 24) -> dict | None:
+    with get_db() as db:
+        existing = db.execute(
+            "SELECT id FROM custom_labels WHERE control = ?", (control,)).fetchone()
+        if existing:
+            db.execute(
+                "UPDATE custom_labels SET layout_json = ?, width_mm = ?, tape = ?,"
+                " updated_at = datetime('now') WHERE control = ?",
+                (json.dumps(elements), width_mm, tape, control),
+            )
+        else:
+            db.execute(
+                "INSERT INTO custom_labels (id, control, layout_json, width_mm, tape)"
+                " VALUES (?, ?, ?, ?, ?)",
+                (new_id(), control, json.dumps(elements), width_mm, tape),
+            )
+    return get_control_custom_label(control)
+
+
 def create_item(name: str, category: str = "Pantry", unit: str = "pcs",
                 package_size: float = 1.0, barcode: str | None = None,
                 tracking_mode: str = "binary", concept_id: str | None = None,

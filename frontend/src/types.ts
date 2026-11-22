@@ -63,6 +63,65 @@ export interface ItemCreatePayload {
   concept_id?: string;
 }
 
+/** One box of a custom label design: mm offsets within the tape's printable
+ *  area and a point-based font size (LabelGenerator coordinates). */
+export interface LabelElement {
+  id: string;
+  /** "name" | "category" | "barcode" of the item, free "text", a "qr" of the
+   *  consume link, or an "ean" graphic of the product barcode. */
+  field: LabelField;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  fontSizePt: number;
+  /** Content for field === "text" (empty otherwise). */
+  text?: string;
+}
+
+export type LabelField = "name" | "category" | "barcode" | "text" | "qr" | "ean";
+
+export const LABEL_FIELDS: { id: LabelField; label: string; hint: string }[] = [
+  { id: "name", label: "Name", hint: "The item's name" },
+  { id: "category", label: "Category", hint: "The item's category" },
+  { id: "barcode", label: "Barcode", hint: "The primary EAN digits" },
+  { id: "text", label: "Text", hint: "Anything you type" },
+  { id: "qr", label: "QR Code", hint: "QR to the item's consume page" },
+  { id: "ean", label: "EAN Code", hint: "EAN-13 graphic of the barcode" },
+];
+
+/** A saved custom label design: element boxes + label width + tape. */
+export interface CustomLabelDesign {
+  elements: LabelElement[];
+  widthMm: number;
+  tape: 12 | 24;
+}
+
+/** List entry: an item with a custom label (sort by createdAt — most
+ *  recently added first). */
+export interface CustomLabelInfo {
+  itemId: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** Scanner control code (single source of truth: the backend's set). */
+export interface ControlCodeInfo {
+  key: "bought" | "trash";
+  code: string;
+  label: string;
+  hint: string;
+}
+
+/** Preset layouts (LabelGenerator's presets minus the Gridfinity one). */
+export interface LabelPreset {
+  id: "mm12" | "mm24" | "storage24";
+  label: string;
+  tape: 12 | 24;
+  widthMm: number;
+  elements: LabelElement[];
+}
+
 export interface Ingredient {
   id: string;
   raw: string;

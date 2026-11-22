@@ -4,7 +4,7 @@ import { CANONICAL_CATEGORIES } from "../types";
 import { resolveConcept } from "../api";
 import Sheet from "./Sheet";
 import StepperRow, { stepSize } from "./StepperRow";
-import { IconBarcode, IconPlus, IconX } from "./Icons";
+import { IconBarcode, IconPlus, IconTag, IconX } from "./Icons";
 import { alarmCount, isBinary } from "../lib/tracking";
 
 interface ItemSettingsProps {
@@ -12,6 +12,11 @@ interface ItemSettingsProps {
   onUpdate: (id: string, patch: ItemPatch) => void;
   onAddBarcode: (id: string, barcode: string) => void;
   onRemoveBarcode: (id: string, barcode: string) => void;
+  /** Custom shelf-label design attached to this item (checkbox state). */
+  hasCustomLabel: boolean;
+  onToggleCustomLabel: (item: Item, enabled: boolean) => void;
+  /** Opens the per-item label editor. */
+  onEditCustomLabel: (item: Item) => void;
 }
 
 function round(value: number): number {
@@ -20,7 +25,8 @@ function round(value: number): number {
 
 /** Tracking mode slider plus alarm/buy steppers. Rendered inline in the
  *  desktop split-detail pane and inside the AlarmSheet on mobile. */
-export function ItemSettings({ item, onUpdate, onAddBarcode, onRemoveBarcode }: ItemSettingsProps) {
+export function ItemSettings({ item, onUpdate, onAddBarcode, onRemoveBarcode,
+                              hasCustomLabel, onToggleCustomLabel, onEditCustomLabel }: ItemSettingsProps) {
   const step = stepSize(item.unit);
   const minBuy = item.unit === "pcs" ? 1 : 0.1;
   const binary = isBinary(item);
@@ -294,6 +300,34 @@ export function ItemSettings({ item, onUpdate, onAddBarcode, onRemoveBarcode }: 
           </button>
         </div>
       </div>
+
+      <div>
+        <div className="stepper-row active" style={{ alignItems: "center" }}>
+          <div style={{ flex: 1 }}>
+            <div className="stepper-label">Create custom label</div>
+            <p className="stepper-hint" style={{ margin: 0 }}>
+              A printable shelf label designed in the label editor — linked to
+              this item only. Unchecking deletes the saved design.
+            </p>
+          </div>
+          <input
+            type="checkbox"
+            role="switch"
+            aria-label="Create custom label"
+            style={{ width: 22, height: 22, accentColor: "var(--accent, #e8590c)" }}
+            checked={hasCustomLabel}
+            onChange={(e) => onToggleCustomLabel(item, e.target.checked)}
+          />
+        </div>
+        {hasCustomLabel && (
+          <div className="sheet-actions">
+            <button className="btn btn-ghost btn-block" onClick={() => onEditCustomLabel(item)}>
+              <IconTag size={16} />
+              Edit label
+            </button>
+          </div>
+        )}
+      </div>
     </>
   );
 }
@@ -303,15 +337,22 @@ interface AlarmSheetProps {
   onUpdate: (id: string, patch: ItemPatch) => void;
   onAddBarcode: (id: string, barcode: string) => void;
   onRemoveBarcode: (id: string, barcode: string) => void;
+  hasCustomLabel: boolean;
+  onToggleCustomLabel: (item: Item, enabled: boolean) => void;
+  onEditCustomLabel: (item: Item) => void;
   onClose: () => void;
 }
 
-export default function AlarmSheet({ item, onUpdate, onAddBarcode, onRemoveBarcode, onClose }: AlarmSheetProps) {
+export default function AlarmSheet({ item, onUpdate, onAddBarcode, onRemoveBarcode,
+                                     hasCustomLabel, onToggleCustomLabel, onEditCustomLabel,
+                                     onClose }: AlarmSheetProps) {
   return (
     <Sheet nested onClose={onClose}>
       <h2 className="sheet-title">{item.name}</h2>
       <p className="sheet-sub">Tracking, alarm &amp; buying quantity</p>
-      <ItemSettings item={item} onUpdate={onUpdate} onAddBarcode={onAddBarcode} onRemoveBarcode={onRemoveBarcode} />
+      <ItemSettings item={item} onUpdate={onUpdate} onAddBarcode={onAddBarcode}
+                    onRemoveBarcode={onRemoveBarcode} hasCustomLabel={hasCustomLabel}
+                    onToggleCustomLabel={onToggleCustomLabel} onEditCustomLabel={onEditCustomLabel} />
       <div className="sheet-actions">
         <button className="btn btn-ghost" onClick={onClose}>
           Done
