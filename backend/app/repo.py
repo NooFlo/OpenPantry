@@ -41,6 +41,26 @@ def _barcodes_for(db, item_ids: list[str]) -> dict[str, list[str]]:
     return out
 
 
+def record_scan(kind: str, barcode: str | None, item: dict | None = None) -> None:
+    """Durable scan history: every scanner action, succeeded or unknown.
+    The in-memory event ring only pings the UI; this log survives restarts."""
+    with get_db() as db:
+        db.execute(
+            "INSERT INTO scan_log (kind, barcode, item_id, item_name) VALUES (?, ?, ?, ?)",
+            (kind, barcode, item["id"] if item else None, item["name"] if item else None),
+        )
+
+
+def recent_scans(limit: int = 60) -> list[dict]:
+    with get_db() as db:
+        rows = db.execute(
+            "SELECT id, at, kind, barcode, item_id, item_name FROM scan_log"
+            " ORDER BY id DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
 def _derive_package_count(item: dict) -> int | None:
     """Qty-mode stock as whole packages (bottles, packs) — the number the
     user tracks, not the weight. Piece-tracked items count pieces directly;

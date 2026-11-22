@@ -1,4 +1,4 @@
-import type { ControlCodeInfo, CustomLabelDesign, CustomLabelInfo, Item, ItemCreatePayload, ItemPatch, ModelList, PendingBarcode, PlanShoppingEntry, Receipt, Recipe, RecipeEditPatch, Settings, SettingsPatch, ShoppingListEntry, WeekPlan } from "./types";
+import type { ControlCodeInfo, CustomLabelDesign, CustomLabelInfo, Item, ItemCreatePayload, ItemPatch, ModelList, PendingBarcode, PlanShoppingEntry, Receipt, Recipe, RecipeEditPatch, ScanLogEntry, Settings, SettingsPatch, ShoppingListEntry, WeekPlan } from "./types";
 
 const BASE = "/api";
 
@@ -253,6 +253,10 @@ export interface ScanEvent {
   seq: number;
   kind: string;
   barcode: string;
+}
+
+export function fetchScanLog(): Promise<ScanLogEntry[]> {
+  return request<{ scans: ScanLogEntry[] }>("/scan/recent?limit=100").then((body) => body.scans);
 }
 
 export function fetchScanEvents(since: number): Promise<{ seq: number; events: ScanEvent[] }> {

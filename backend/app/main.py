@@ -274,7 +274,9 @@ _SCAN_EVENT_SEQ = [0]
 _SCAN_EVENT_LOCK = threading.Lock()
 
 
-def _record_scan_event(kind: str, barcode: str) -> None:
+def _record_scan_event(kind: str, barcode: str, item: dict | None = None) -> None:
+    """Ping the live UI (ring) and persist the scan (table): the recent-scans
+    view survives restarts even when the in-memory ring is wiped."""
     with _SCAN_EVENT_LOCK:
         _SCAN_EVENT_SEQ[0] += 1
         _SCAN_EVENTS.append({
@@ -282,6 +284,10 @@ def _record_scan_event(kind: str, barcode: str) -> None:
             "kind": kind,
             "barcode": barcode,
         })
+    if not kind.startswith("unknown"):
+        repo.record_scan(kind, barcode, item)
+    else:
+        repo.record_scan(kind, barcode, None)
 
 
 @app.get("/api/scan/events")
@@ -300,9 +306,10 @@ def scan_barcode(body: BarcodeRequest):
         products.record_scan_intent(body.barcode, "consume")
         _record_scan_event("unknown:consume", body.barcode)
         raise HTTPException(404, "unknown barcode")
-    _record_scan_event("consume", body.barcode)  # live UI refresh ping
+    consumed = repo.consume_item(item["id"], item["package_size"])
+    _record_scan_event("consume", body.barcode, consumed or item)  # live UI refresh ping
     _push_to_ha()
-    return camelize(repo.consume_item(item["id"], item["package_size"]))
+    return camelize(consumed or item)
 
 
 # Control-code stickers for the USB scanner: scan one of these EAN-13 codes in
@@ -359,9 +366,9 @@ def scan_purchase(body: BarcodeRequest):
                 barcode=body.barcode,
                 tracking_mode="qty",  # count packages: each scan adds +1
             )
-    _record_scan_event("bought", body.barcode)  # live UI refresh ping
     _push_to_ha()
     restocked = repo.restock_item(item["id"], item["package_size"] or 1)
+    _record_scan_event("bought", body.barcode, restocked or item)  # live UI refresh ping
     return camelize(restocked or item)
 
 
@@ -377,9 +384,10 @@ def scan_empty(body: BarcodeRequest):
         products.record_scan_intent(body.barcode, "consume")
         _record_scan_event("unknown:consume", body.barcode)
         raise HTTPException(404, "unknown barcode")
-    _record_scan_event("consume", body.barcode)  # live UI refresh ping
+    consumed = repo.consume_item(item["id"], item["package_size"])
+    _record_scan_event("consume", body.barcode, consumed or item)  # live UI refresh ping
     _push_to_ha()
-    return camelize(repo.consume_item(item["id"], item["package_size"]))
+    return camelize(consumed or item)
 
 
 @app.get("/print/control-codes", response_class=HTMLResponse)
@@ -1487,8 +1495,17 @@ def scan_item(body: ItemScanRequest):
     item = repo.get_item(body.item_id)
     if not item:
         raise HTTPException(404, "item not found")
+    consumed = repo.consume_item(item["id"], item["package_size"])
+    _record_scan_event("consume", None, consumed or item)  # live UI refresh ping
     _push_to_ha()
-    return camelize(repo.consume_item(item["id"], item["package_size"]))
+    return camelize(consumed or item)
+
+
+@app.get("/api/scan/recent")
+def scan_recent(limit: int = 60):
+    if limit < 1 or limit > 500:
+        raise HTTPException(400, "limit must be 1-500")
+    return {"scans": camelize(repo.recent_scans(limit))}
 
 
 def _lemd_response(payload: str, filename: str) -> Response:

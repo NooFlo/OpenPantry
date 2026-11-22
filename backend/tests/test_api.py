@@ -1115,3 +1115,21 @@ def test_update_without_barcode_keeps_the_items_barcodes(client):
     client.post(f"/api/items/{iid}/update", json={"barcode": ""})
     assert lookup()["status"] in ("unknown", "not_found")
     client.delete(f"/api/items/{iid}")
+
+
+def test_recent_scans_log_names_and_kinds(client):
+    """The Recent view: every successful scan lands with its item name and
+    +/- intent; unknown scans show up flagged for follow-up."""
+    item = repo.create_item(name="Scanfix Log", unit="pcs", package_size=1,
+                            tracking_mode="qty", barcode="2098770000019")
+    # one bought scan, one consume scan — as the bridge posts them
+    assert client.post("/api/scan/purchase",
+                       json={"barcode": "2098770000019"}).status_code == 200
+    assert client.post("/api/scan/barcode",
+                       json={"barcode": "2098770000019"}).status_code == 200
+    scans = client.get("/api/scan/recent?limit=50").json()["scans"]
+    mine = [e for e in scans if e["itemId"] == item["id"]]
+    assert [e["kind"] for e in mine] == ["consume", "bought"]  # newest first
+    assert all(e["itemName"] == "Scanfix Log" for e in mine)
+    assert mine[1]["barcode"] == "2098770000019"
+    repo.delete_item(item["id"])

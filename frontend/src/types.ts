@@ -295,6 +295,15 @@ export interface ModelList {
   llmAvailable: boolean;
 }
 
+export interface ScanLogEntry {
+  id: number;
+  at: string;
+  kind: string;
+  barcode?: string | null;
+  itemId?: string | null;
+  itemName?: string | null;
+}
+
 export interface PendingBarcode {
   barcode: string;
   /** Which scanner mode was active when this was scanned unknown:

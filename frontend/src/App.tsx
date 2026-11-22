@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import type { Item, ItemCreatePayload, ItemPatch, ModelList, PendingBarcode, Recipe, RecipeEditPatch, Receipt, Settings, SettingsPatch, ShoppingListEntry, Tab } from "./types";
+import type { Item, ItemCreatePayload, ItemPatch, ModelList, PendingBarcode, Recipe, RecipeEditPatch, Receipt, ScanLogEntry, Settings, SettingsPatch, ShoppingListEntry, Tab } from "./types";
 import {
   addMissingToShoppingList,
   addToShoppingList,
@@ -14,6 +14,7 @@ import {
   fetchModels,
   fetchPendingBarcodes,
   fetchScanEvents,
+  fetchScanLog,
   fetchReceipts,
   fetchRecipes,
   fetchSettings,
@@ -70,6 +71,7 @@ export default function App() {
   const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS);
   const [models, setModels] = useState<ModelList>({ local: [], llmAvailable: false });
   const [pending, setPending] = useState<PendingBarcode[]>([]);
+  const [scanLog, setScanLog] = useState<ScanLogEntry[]>([]);
   const [reviewOpen, setReviewOpen] = useState(false);
   const lastScanSeq = useRef(0);
 
@@ -92,6 +94,7 @@ export default function App() {
       setPending(entries);
       if (entries.length > 0) setReviewOpen(true);
     }).catch(() => { /* ignore */ });
+    fetchScanLog().then(setScanLog).catch(() => { /* ignore */ });
     const tick = () => {
       fetchScanEvents(lastScanSeq.current)
         .then((body) => {
@@ -101,6 +104,7 @@ export default function App() {
           // fresh inventory and list without waiting for a page reload
           fetchItems().then(setItems).catch(() => { /* backend briefly away */ });
           fetchShoppingList().then(setShoppingList).catch(() => { /* ignore */ });
+          fetchScanLog().then(setScanLog).catch(() => { /* ignore */ });
           return fetchPendingBarcodes().then((entries) => {
             setPending(entries);
             if (entries.length > 0) setReviewOpen(true);
@@ -337,6 +341,8 @@ export default function App() {
             onAddItem={onAddItem}
             onAddItemBarcode={onAddItemBarcode}
             onRemoveItemBarcode={onRemoveItemBarcode}
+            scanLog={scanLog}
+            onOpenReview={() => setReviewOpen(true)}
             settings={settings}
             models={models}
             onSaveSettings={saveSettings}

@@ -23,6 +23,15 @@ CREATE TABLE IF NOT EXISTS items (
     auto_restock INTEGER NOT NULL DEFAULT 0
 );
 
+CREATE TABLE IF NOT EXISTS scan_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    at TEXT NOT NULL DEFAULT (datetime('now')),
+    kind TEXT NOT NULL,
+    barcode TEXT,
+    item_id TEXT,
+    item_name TEXT
+);
+
 CREATE TABLE IF NOT EXISTS receipts (
     id TEXT PRIMARY KEY,
     store TEXT NOT NULL,

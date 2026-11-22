@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import type { ControlCodeInfo, CustomLabelInfo, Item, ItemCreatePayload, ItemPatch, ModelList, Receipt, Settings, SettingsPatch } from "../types";
+import type { ControlCodeInfo, CustomLabelInfo, Item, ItemCreatePayload, ItemPatch, ModelList, Receipt, ScanLogEntry, Settings, SettingsPatch } from "../types";
 import { CANONICAL_CATEGORIES } from "../types";
 import {
   deleteItemCustomLabel,
   fetchCustomLabelInfos,
   saveItemCustomLabel,
 } from "../api";
-import { IconBarcode, IconGear, IconInventory, IconMinus, IconPlus, IconReceipt, IconSearch, IconTag } from "../components/Icons";
+import { IconBarcode, IconClock, IconGear, IconInventory, IconMinus, IconPlus, IconReceipt, IconSearch, IconTag } from "../components/Icons";
 import Sheet from "../components/Sheet";
 import AlarmSheet, { ItemSettings } from "../components/AlarmSheet";
 import ThemeToggle from "../components/ThemeToggle";
@@ -14,6 +14,7 @@ import ModelSettingsSheet from "../components/ModelSettingsSheet";
 import BarcodesView from "../components/BarcodesView";
 import LabelEditor, { type LabelEditorTarget } from "../components/LabelEditor";
 import AddItemSheet from "../components/AddItemSheet";
+import ScanLogSheet from "../components/ScanLogSheet";
 import NfcLinkBlock from "../components/NfcLinkBlock";
 import ReceiptsView from "./ReceiptsView";
 import { useMediaQuery } from "../lib/useMediaQuery";
@@ -45,9 +46,11 @@ interface InventoryScreenProps {
   onSaveSettings: (patch: SettingsPatch) => void;
   theme: "light" | "dark";
   onToggleTheme: () => void;
+  scanLog: ScanLogEntry[];
+  onOpenReview: () => void;
 }
 
-export default function InventoryScreen({ items, receipts, onConsume, onRestock, onDelete, onMatchItem, onUpdateItem, onAddItem, onAddItemBarcode, onRemoveItemBarcode, settings, models, onSaveSettings, theme, onToggleTheme }: InventoryScreenProps) {
+export default function InventoryScreen({ items, receipts, onConsume, onRestock, onDelete, onMatchItem, onUpdateItem, onAddItem, onAddItemBarcode, onRemoveItemBarcode, settings, models, onSaveSettings, theme, onToggleTheme, scanLog, onOpenReview }: InventoryScreenProps) {
   const [query, setQuery] = useState("");
   const [category, setCategory] = useState<string | null>(null);
   const [selected, setSelected] = useState<Item | null>(null);
@@ -55,6 +58,7 @@ export default function InventoryScreen({ items, receipts, onConsume, onRestock,
   const [alarmsOpen, setAlarmsOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [addItemOpen, setAddItemOpen] = useState(false);
+  const [scanLogOpen, setScanLogOpen] = useState(false);
   const [view, setView] = useState<View>("items");
   const [customLabels, setCustomLabels] = useState<CustomLabelInfo[]>([]);
   const [labelEditorFor, setLabelEditorFor] = useState<LabelEditorTarget | null>(null);
@@ -356,6 +360,14 @@ export default function InventoryScreen({ items, receipts, onConsume, onRestock,
           )}
           {view === "items" && (
             <>
+              <button
+                className="icon-btn"
+                onClick={() => setScanLogOpen(true)}
+                aria-label="Recent scans"
+                title="Recent scans"
+              >
+                <IconClock size={19} />
+              </button>
               <button className="icon-btn" onClick={() => setAddItemOpen(true)} aria-label="Add item manually" title="Add item">
                 <IconPlus size={19} />
               </button>
@@ -433,6 +445,14 @@ export default function InventoryScreen({ items, receipts, onConsume, onRestock,
 
       {addItemOpen && (
         <AddItemSheet onAddItem={onAddItem} onClose={() => setAddItemOpen(false)} categories={categorySuggestions} />
+      )}
+
+      {scanLogOpen && (
+        <ScanLogSheet
+          scans={scanLog}
+          onOpenReview={onOpenReview}
+          onClose={() => setScanLogOpen(false)}
+        />
       )}
 
       {labelEditorFor && (
