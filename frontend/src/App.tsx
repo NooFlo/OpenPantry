@@ -426,7 +426,7 @@ export default function App() {
           />
         )}
         {tab === "plan" && settings.planningEnabled && (
-          <PlanningScreen recipes={recipes} theme={theme} onToggleTheme={toggleTheme} />
+          <PlanningScreen recipes={recipes} items={items} theme={theme} onToggleTheme={toggleTheme} />
         )}
       </main>
       <TabBar active={tab} onChange={setTab} planningEnabled={settings.planningEnabled} />

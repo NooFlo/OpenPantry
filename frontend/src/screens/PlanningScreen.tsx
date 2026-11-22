@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import type { DragEvent } from "react";
-import type { PlanPerson, PreparedMeal, Recipe, PlanShoppingEntry, PlanningFill, PlanningMeal, WeekPlan } from "../types";
+import type { PlanPerson, PreparedMeal, Recipe, Item, PlanShoppingEntry, PlanningFill, PlanningMeal, WeekPlan } from "../types";
 import {
   addPlanFill,
   addPlanMeal,
@@ -19,6 +19,7 @@ import Sheet from "../components/Sheet";
 import StepperRow from "../components/StepperRow";
 import ThemeToggle from "../components/ThemeToggle";
 import { IconPlus, IconStar, IconX } from "../components/Icons";
+import { maxPortions } from "../lib/cooking";
 
 const DAY_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 const MEAL_SUGGESTIONS = ["Breakfast", "Lunch", "Dinner", "Snack"];
@@ -26,6 +27,7 @@ const MEAL_SUGGESTIONS = ["Breakfast", "Lunch", "Dinner", "Snack"];
 interface PlanningScreenProps {
   recipes: Recipe[];
   recipesLoading?: boolean;
+  items: Item[];
   theme: "light" | "dark";
   onToggleTheme: () => void;
 }
@@ -55,7 +57,7 @@ interface FillSheetState {
   mealId?: string;
 }
 
-export default function PlanningScreen({ recipes, theme, onToggleTheme }: PlanningScreenProps) {
+export default function PlanningScreen({ recipes, items, theme, onToggleTheme }: PlanningScreenProps) {
   const [week, setWeek] = useState(() => mondayOf(new Date()));
   const [plan, setPlan] = useState<WeekPlan | null>(null);
   const [addMealDay, setAddMealDay] = useState<number | null>(null);
@@ -83,6 +85,14 @@ export default function PlanningScreen({ recipes, theme, onToggleTheme }: Planni
   const openFill = (drag: DragPayload, mealId?: string) => setFillSheet({ drag, mealId });
 
   const favorites = useMemo(() => recipes.filter((r) => r.favorite), [recipes]);
+
+  /** recipes where every tracked ingredient is covered by pantry stock
+   *  (cookable for at least one portion) — shown with a green ring */
+  const inStock = useMemo(() => {
+    const map = new Map<string, boolean>();
+    for (const r of recipes) map.set(r.id, maxPortions(r, items) >= 1);
+    return map;
+  }, [recipes, items]);
 
   /** Direct drop placement: no sheet. A drop on a person's half targets that
    * person (one portion); a drop on the whole field feeds the meal's persons
@@ -207,7 +217,7 @@ export default function PlanningScreen({ recipes, theme, onToggleTheme }: Planni
             {favOpen && (
               <div className="plan-menu-list">
                 {favorites.map((r) => (
-                  <RecipePick key={r.id} recipe={r} onPick={() => openFill({ kind: "recipe", id: r.id })} />
+                  <RecipePick key={r.id} recipe={r} inStock={inStock.get(r.id) ?? false} onPick={() => openFill({ kind: "recipe", id: r.id })} />
                 ))}
                 {favorites.length === 0 && (
                   <div className="plan-empty">Star recipes to pin them here.</div>
@@ -228,7 +238,7 @@ export default function PlanningScreen({ recipes, theme, onToggleTheme }: Planni
             {allOpen && (
               <div className="plan-menu-list">
                 {recipes.map((r) => (
-                  <RecipePick key={r.id} recipe={r} onPick={() => openFill({ kind: "recipe", id: r.id })} />
+                  <RecipePick key={r.id} recipe={r} inStock={inStock.get(r.id) ?? false} onPick={() => openFill({ kind: "recipe", id: r.id })} />
                 ))}
                 {recipes.length === 0 && <div className="plan-empty">No recipes saved yet.</div>}
               </div>
@@ -851,15 +861,16 @@ function WeekListSheet({
   );
 }
 
-/** Drag-and-drop recipe row inside a collapsible plan group. */
-function RecipePick({ recipe, onPick }: { recipe: Recipe; onPick: () => void }) {
+/** Drag-and-drop recipe row inside a collapsible plan group. A green ring
+ *  marks recipes whose every tracked ingredient is in pantry stock. */
+function RecipePick({ recipe, inStock, onPick }: { recipe: Recipe; inStock: boolean; onPick: () => void }) {
   return (
     <div
-      className="plan-pick"
+      className={inStock ? "plan-pick in-stock" : "plan-pick"}
       draggable
       onDragStart={(e) => e.dataTransfer.setData("text/plain", `recipe:${recipe.id}`)}
       onClick={onPick}
-      title="Drop on a meal field to place directly — or tap for options"
+      title={inStock ? "All ingredients in stock" : "Drop on a meal field to place directly — or tap for options"}
     >
       {recipe.favorite && <IconStar size={13} filled className="plan-pick-star" />}
       <span className="plan-pick-name">{recipe.title}</span>

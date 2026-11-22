@@ -2838,6 +2838,12 @@ button.summary-card {
   color: #f5b301;
 }
 
+/* every tracked ingredient covered by pantry stock */
+.plan-pick.in-stock {
+  border-color: var(--ok);
+  box-shadow: 0 0 0 2px var(--ok-soft);
+}
+
 .plan-pick-name {
   flex: 1;
   overflow: hidden;
