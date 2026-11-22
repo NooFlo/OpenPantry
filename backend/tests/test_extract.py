@@ -29,9 +29,20 @@ def test_parse_ingredient_line_comma_decimal():
 
 
 def test_parse_ingredient_line_unconvertible_unit():
+    # household words quantify with their own word as unit; stock math
+    # guards them (never compared numerically against kg/l/pcs items)
     parsed = parse_ingredient_line("2 EL Olivenöl")
-    assert parsed["amount"] is None
+    assert parsed["amount"] == 2
+    assert parsed["unit"] == "EL"
     assert parsed["name"] == "Olivenöl"
+    parsed = parse_ingredient_line("3 cloves garlic")
+    assert parsed["amount"] == 3
+    assert parsed["unit"] == "cloves"
+    assert parsed["name"] == "garlic"
+    parsed = parse_ingredient_line("1 cup plain flour")
+    assert parsed["amount"] == 1
+    assert parsed["unit"] == "cup"
+    assert parsed["name"] == "plain flour"
 
 
 def test_parse_ingredient_line_pieces():
@@ -42,17 +53,20 @@ def test_parse_ingredient_line_pieces():
 
 def test_parse_ingredient_line_unicode_fraction():
     parsed = parse_ingredient_line("1½ tsp ground cumin")
-    assert parsed["amount"] is None
+    assert parsed["amount"] == 1.5
+    assert parsed["unit"] == "tsp"
     assert parsed["name"] == "ground cumin"
 
     parsed = parse_ingredient_line("½ tsp ground turmeric")
-    assert parsed["amount"] is None
+    assert parsed["amount"] == 0.5
+    assert parsed["unit"] == "tsp"
     assert parsed["name"] == "ground turmeric"
 
 
 def test_parse_ingredient_line_range():
     parsed = parse_ingredient_line("1 - 2 tbsp caster sugar")
-    assert parsed["amount"] is None
+    assert parsed["amount"] == 1
+    assert parsed["unit"] == "tbsp"
     assert parsed["name"] == "caster sugar"
 
 

@@ -6,6 +6,25 @@ export function scaledAmount(ing: Ingredient, recipe: Recipe, portions: number):
   return Math.round(((ing.amount * portions) / recipe.basePortions) * 1000) / 1000;
 }
 
+/** Rows measured in household words — spoons, cloves, cups, cm pieces
+ *  ("0.5 TL Zimt"). Their amount scales with portions in displays and
+ *  step qty mentions, but they are never compared numerically against an
+ *  item's kg/l/pcs stock: stocked satisfies, empty is missing (mirrors
+ *  repo.household_row on the backend). */
+const HOUSEHOLD_UNITS = new Set([
+  "tsp", "teaspoon", "teaspoons", "tbsp", "tbs", "tbsps", "tablespoon", "tablespoons",
+  "el", "tl", "prise", "pinch", "handful", "handvoll", "splash", "sprig", "sprigs",
+  "clove", "cloves", "zehe", "zehen", "pod", "pods", "stick", "sticks",
+  "scheibe", "scheiben", "slice", "slices", "dose", "dosen", "can", "cans",
+  "cup", "cups", "tasse", "tassen", "cm", "mm", "zoll", "inch", "stange", "stangen",
+  "bund", "bunch", "beutel", "packung", "packungen", "glas",
+]);
+
+export function isHouseholdUnit(ing: Ingredient): boolean {
+  const unit = (ing.unit || "").trim().toLowerCase();
+  return !!unit && HOUSEHOLD_UNITS.has(unit);
+}
+
 /** Binary items cannot be divided into portions: in stock is always enough,
  *  out of stock blocks the recipe entirely. Alternative groups ("rice or
  *  naan") share one slot: satisfied if any option is available, and never
@@ -14,8 +33,7 @@ function memberCapacity(ing: Ingredient, recipe: Recipe, items: Item[]): number 
   if (!ing.itemId) return null;
   const item = items.find((i) => i.id === ing.itemId);
   if (!item) return null;
-  if (isBinary(item)) return isInStock(item) ? Infinity : null;
-  if (ing.amount == null) return isInStock(item) ? Infinity : null;
+  if (isBinary(item) || ing.amount == null || isHouseholdUnit(ing)) return isInStock(item) ? Infinity : null;
   const per = ing.amount / recipe.basePortions;
   if (per <= 0) return Infinity;
   return Math.floor(item.quantity / per + 1e-9);
@@ -47,9 +65,10 @@ export function maxPortions(recipe: Recipe, items: Item[]): number {
       if (isInStock(item)) continue;
       return 0;
     }
-    if (ing.amount == null) {
-      // bare-name row: no portion math possible — stocked means unlimited,
-      // empty blocks the recipe (mirrors memberCapacity/ingredientInStock)
+    if (ing.amount == null || isHouseholdUnit(ing)) {
+      // bare-name or household-measure row: no portion math possible —
+      // stocked means unlimited, empty blocks the recipe
+      // (mirrors memberCapacity/ingredientInStock)
       if (isInStock(item)) continue;
       return 0;
     }
@@ -90,8 +109,7 @@ export function missingCount(recipe: Recipe, items: Item[], portions: number): n
 }
 
 export function missingAmount(ing: Ingredient, recipe: Recipe, portions: number, item: Item): number {
-  if (isBinary(item)) return 0;
-  if (ing.amount == null) return 0;
+  if (isBinary(item) || ing.amount == null || isHouseholdUnit(ing)) return 0;
   return Math.max(0, (ing.amount * portions) / recipe.basePortions - item.quantity);
 }
 
@@ -101,8 +119,7 @@ export function missingAmount(ing: Ingredient, recipe: Recipe, portions: number,
  *  ("Weizenmehl (Type 550)" typed as a bare name) behave like binary
  *  items: stocked is satisfied, empty is missing. */
 export function ingredientInStock(ing: Ingredient, recipe: Recipe, portions: number, item: Item): boolean {
-  if (isBinary(item)) return isInStock(item);
-  if (ing.amount == null) return isInStock(item);
+  if (isBinary(item) || ing.amount == null || isHouseholdUnit(ing)) return isInStock(item);
   return missingAmount(ing, recipe, portions, item) <= 1e-9;
 }
 

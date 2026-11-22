@@ -974,6 +974,27 @@ def _match_or_create_item(db, name: str, unit: str | None) -> dict:
     return item
 
 
+# Rows measured in household words (spoons, cloves, cups, cm pieces):
+# their amount scales with portions in displays and step qty mentions, but
+# stock math never compares them numerically against a kg/l/pcs item —
+# "0.5 TL Zimt" must not deduct 0.5 kg from a kg-tracked spice. Treat them
+# like binary rows: in stock satisfies, empty shops one package.
+HOUSEHOLD_ROW_UNITS = {
+    "tsp", "teaspoon", "teaspoons", "tbsp", "tbs", "tbsps", "tablespoon", "tablespoons",
+    "el", "tl", "prise", "pinch", "handful", "handvoll", "splash", "sprig", "sprigs",
+    "clove", "cloves", "zehe", "zehen", "pod", "pods", "stick", "sticks",
+    "scheibe", "scheiben", "slice", "slices", "dose", "dosen", "can", "cans",
+    "cup", "cups", "tasse", "tassen", "cm", "mm", "zoll", "inch", "in", "stange", "stangen",
+    "bund", "bunch", "beutel", "packung", "packungen", "glas", "gläser",
+}
+
+
+def household_row(ing: dict) -> bool:
+    """True when the row's unit is a household measure word."""
+    unit = (ing.get("unit") or "").strip().lower()
+    return unit in HOUSEHOLD_ROW_UNITS if unit else False
+
+
 def _ingredient_amount(ing: dict) -> float:
     if ing["amount"] is not None:
         return ing["amount"]
@@ -1018,9 +1039,10 @@ def add_missing_to_shopping_list(recipe: dict, items_by_id: dict, portions: floa
                 )
             elif effective["amount"] is None:
                 db.execute("UPDATE ingredients SET amount = ? WHERE id = ?", (amount, effective["id"]))
-            if item["tracking_mode"] == "binary":
-                # binary: any not-in-stock item goes on the list as one buy
-                # amount; the recipe requirement is not compared numerically
+            if item["tracking_mode"] == "binary" or household_row(effective):
+                # binary or household measures ("0.5 TL Zimt"): a
+                # not-in-stock item goes on the list as one buy amount;
+                # the recipe requirement is not compared numerically
                 if item["quantity"] > 0:
                     continue
                 row = db.execute("SELECT 1 FROM shopping_list WHERE item_id = ?", (item["id"],)).fetchone()
@@ -1065,9 +1087,10 @@ def cook_recipe(recipe: dict, portions: float) -> list[dict]:
             before = db.execute("SELECT * FROM items WHERE id = ?", (ing["item_id"],)).fetchone()
             if not before:
                 continue
-            if before["tracking_mode"] == "binary":
-                # binary tracking: cooking only raises the "might be running
-                # low" question; the amount stays on record for prognosis
+            if before["tracking_mode"] == "binary" or household_row(ing):
+                # binary tracking or household measures (TL, cloves, cm):
+                # cooking only raises the "might be running low" question;
+                # the amount stays on record for prognosis
                 if before["quantity"] > 0:
                     db.execute(
                         "UPDATE items SET uncertain = 1 WHERE id = ?",

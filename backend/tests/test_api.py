@@ -1021,7 +1021,9 @@ def test_edit_recipe_texts_ingredients_and_steps(client):
     assert edited_by_raw["2 Zwiebeln"]["itemId"]
     # changed line gets the new parsed amount
     assert edited_by_raw["400 g Dinkelmehl"]["amount"] == pytest.approx(0.4)
-    assert edited_by_raw["2 EL Zucker"]["amount"] is None
+    # household counts quantify with their word as the unit
+    assert edited_by_raw["2 EL Zucker"]["amount"] == pytest.approx(2)
+    assert edited_by_raw["2 EL Zucker"]["unit"] == "EL"
 
     # persisted across reloads, meta (none here) untouched
     reloaded = next(r for r in client.get("/api/recipes").json() if r["id"] == recipe["id"])
@@ -1096,9 +1098,10 @@ def test_import_links_step_quantities(client):
     assert step0[0]["ingredientId"] == by_raw["2 Zwiebeln"]["id"]
     assert recipe["steps"][0][step0[0]["start"]:step0[0]["end"]].lower() == "zwiebeln"
     step1 = step_links[1]
-    assert [l["ingredientId"] for l in step1] == [by_raw["500 g Mehl"]["id"]]
-    # Salz is unquantified (prise): no qty to show, so no link
-    assert all(l["ingredientId"] != by_raw["1 Prise Salz"]["id"] for l in step1)
+    # the prise row now carries its household count, so both mentions
+    # get live (qty) spans — Salz first, Mehl second (step text order)
+    assert [l["ingredientId"] for l in step1] == [
+        by_raw["1 Prise Salz"]["id"], by_raw["500 g Mehl"]["id"]]
 
 
 def test_edit_recipe_relinks_step_quantities(client):
@@ -1252,3 +1255,42 @@ def test_missing_items_rename_lifts_size_into_quantity(client):
         client.delete(f"/api/items/{created['id']}")
     finally:
         repo.delete_recipe(recipe["id"])
+
+
+def test_household_units_never_touch_stock_numbers(client):
+    """Spoon/clove/cup counts scale in displays but never compare
+    numerically with a qty item's stock: cooking marks uncertain instead
+    of deducting 0.5 kg of cinnamon, add-missing buys one package when
+    empty instead of a computed amount."""
+    zimt = None
+    recipe = None
+    try:
+        zimt = client.post("/api/items", json={
+            "name": "Cassia Zimt Testrinde", "category": "Pantry", "unit": "kg",
+            "quantity": 0.01, "tracking_mode": "qty", "package_size": 0.05,
+            "buy_amount": 0.05, "min_quantity": 0.01}).json()
+        recipe = repo.create_recipe(
+            "FooSpoons", "pasted", 2,
+            [{"raw": "0.5 TL Zimt Testsud", "amount": 0.5, "unit": "TL",
+              "item_id": zimt["id"], "tracked": True}], [])
+        items = client.post(f"/api/recipes/{recipe['id']}/cook", json={"portions": 4}).json()
+        item = next(i for i in items if i["id"] == zimt["id"])
+        # no numeric deduction; uncertain raised, quantity untouched
+        assert item["quantity"] == 0.01
+        assert item["uncertain"]  # sqlite int truthiness
+        # in stock: nothing goes on the shopping list
+        result = client.post(f"/api/recipes/{recipe['id']}/add-missing",
+                             json={"portions": 4}).json()
+        assert not [e for e in result if e["name"] == "Cassia Zimt Testrinde"]
+        # out of stock: exactly one buy package, not a computed amount
+        repo.empty_item(zimt["id"])
+        result = client.post(f"/api/recipes/{recipe['id']}/add-missing",
+                             json={"portions": 4}).json()
+        entry = next(e for e in result if e["name"] == "Cassia Zimt Testrinde")
+        assert entry["amount"] == pytest.approx(0.05)
+        client.delete(f"/api/shopping-list/{zimt['id']}")
+    finally:
+        if recipe:
+            repo.delete_recipe(recipe["id"])
+        if zimt:
+            repo.delete_item(zimt["id"])

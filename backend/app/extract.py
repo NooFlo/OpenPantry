@@ -400,10 +400,14 @@ def parse_ingredient_line(line: str) -> dict | None:
         return {"raw": line, "amount": round(amount, 4), "unit": unit, "name": name}
     if raw_unit is None:
         return {"raw": line, "amount": amount, "unit": "pcs", "name": name}
+    # household measure words (spoons, cloves, handfuls, cups, cm pieces...):
+    # the count IS the amount, the unit stays the household word. Displays
+    # scale it with the portions setting; stock math never compares these
+    # numerically against a kg/l/pcs item (repo.household_row /
+    # cooking.ts householdUnit guard that comparison).
     if raw_unit.lower() in SPOON_UNITS:
         name = re.sub(r"^\s*(?:tsp|teaspoons?|tbs|tbsps?|tablespoons?|el|tl|prise|pinch|handful|splash|sprigs?)\s+", "", name, flags=re.IGNORECASE).strip()
-        return {"raw": line, "amount": None, "unit": None, "name": name}
-    return {"raw": line, "amount": None, "unit": None, "name": name}
+    return {"raw": line, "amount": amount, "unit": raw_unit, "name": name}
 
 
 def parse_duration_minutes(value) -> float | None:
