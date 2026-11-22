@@ -50,6 +50,12 @@ export function confirmLow(itemId: string, isLow: boolean): Promise<Item> {
   return request<Item>(`/items/${itemId}/confirm-low`, { method: "POST", body: JSON.stringify({ is_low: isLow }) });
 }
 
+/** Dismiss the projected low prompt until the estimate drops below its
+ *  level at dismissal. */
+export function snoozeLow(itemId: string): Promise<Item> {
+  return request<Item>(`/items/${itemId}/snooze-low`, { method: "POST", body: "{}" });
+}
+
 export function updateItem(itemId: string, patch: ItemPatch): Promise<Item> {
   return request<Item>(`/items/${itemId}/update`, { method: "POST", body: JSON.stringify(patch) });
 }

@@ -261,6 +261,13 @@ def init_db():
             db.execute("ALTER TABLE plan_fills ADD COLUMN person_id TEXT")
             db.execute("UPDATE plan_fills SET person_id = NULL")
 
+        # stock-estimate snooze: the projected level a "might be running low"
+        # prompt was dismissed at; it stays down until the estimate falls
+        # below it (planning more meals, ...)
+        item_columns = {row["name"] for row in db.execute("PRAGMA table_info(items)")}
+        if "snooze_estimate" not in item_columns:
+            db.execute("ALTER TABLE items ADD COLUMN snooze_estimate REAL")
+
         # generic-name backfill: every item and ingredient row gains the
         # brand-free identity the matcher compares against (deterministic;
         # user-set names are never touched — backfill fills NULLs only)

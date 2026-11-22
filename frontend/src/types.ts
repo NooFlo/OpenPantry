@@ -31,6 +31,17 @@ export interface Item {
    *  barcode products are matched against; derived, then editable. */
   genericName?: string | null;
   uncertain?: boolean;
+  /** Projected stock: quantity minus what planned, un-cooked meals still
+   *  need. Drives the "might be running low" prompt; falls back to quantity
+   *  when the projection is absent. */
+  estimate?: number;
+  /** What planned meals still need (the projection's own deduction). */
+  committed?: number;
+  /** Backend-computed low flag from the projection — preferred by isLow(). */
+  low?: boolean;
+  /** Plan-driven dip: the alarm is crossed only after the planned meals
+   *  cook. Drives the "might be running low" Yes/No prompt on Home. */
+  lowProjected?: boolean;
   trackingMode: TrackingMode;
 }
 

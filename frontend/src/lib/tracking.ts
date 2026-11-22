@@ -8,8 +8,13 @@ export function isInStock(item: Item): boolean {
   return item.quantity > 0;
 }
 
+/** Preferred: the backend's projected `low` (quantity minus what planned,
+ *  un-cooked meals still need, snooze-aware). Fallback: the local check, for
+ *  responses predating the projection. */
 export function isLow(item: Item): boolean {
-  return isBinary(item) ? !isInStock(item) : item.quantity <= item.minQuantity;
+  if (item.low !== undefined) return item.low;
+  if (isBinary(item)) return !isInStock(item);
+  return item.quantity <= item.minQuantity;
 }
 
 /** Whole packages in stock: bottles for juice, pieces for eggs. Piece-tracked

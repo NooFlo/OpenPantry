@@ -680,6 +680,16 @@ def confirm_low(item_id: str, body: ConfirmLowRequest):
     return camelize(item)
 
 
+@app.post("/api/items/{item_id}/snooze-low")
+def snooze_low(item_id: str):
+    """Dismiss the projected low prompt until the estimate drops below its
+    level at dismissal (planning more meals re-raises it)."""
+    item = repo.snooze_low(item_id)
+    if not item:
+        raise HTTPException(404, "item not found")
+    return camelize(item)
+
+
 @app.get("/api/receipts")
 def get_receipts():
     return camelize(repo.list_receipts())

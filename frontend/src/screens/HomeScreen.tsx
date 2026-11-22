@@ -16,6 +16,7 @@ interface HomeScreenProps {
   onPushShoppingList: () => Promise<{ pushed: boolean }>;
   onSaveSettings: (patch: SettingsPatch) => void;
   onConfirmLow: (id: string, isLow: boolean) => void;
+  onSnoozeLow: (id: string) => void;
   theme: "light" | "dark";
   onToggleTheme: () => void;
 }
@@ -29,6 +30,7 @@ export default function HomeScreen({
   onPushShoppingList,
   onSaveSettings,
   onConfirmLow,
+  onSnoozeLow,
   theme,
   onToggleTheme,
 }: HomeScreenProps) {
@@ -38,6 +40,10 @@ export default function HomeScreen({
     (i) => isLow(i) && !i.uncertain && (i.autoRestock || i.minQuantity > 0)
   );
   const uncertain = items.filter((i) => i.uncertain);
+  // Plan-driven dips: the stock covers today, but the meals on this week's
+  // plan will pull it below the alarm. Ask, don't nag: "No" snoozes until
+  // the estimate drops further.
+  const projectedLow = items.filter((i) => i.lowProjected);
 
   return (
     <div className="screen">
@@ -110,6 +116,39 @@ export default function HomeScreen({
                 );
               })}
             </div>
+          )}
+
+          {projectedLow.length > 0 && (
+            <>
+              <h2 className="section-title">Will run low with your plan</h2>
+              <div className="card-grid">
+                {projectedLow.map((item) => (
+                  <div key={item.id} className="card item-card">
+                    <div className="info">
+                      <div className="item-name">{item.name}</div>
+                      <div className="item-sub">
+                        {item.committed && item.committed > 0
+                          ? `planned meals need ~${Math.round(item.committed * 100) / 100} ${item.unit}`
+                          : "the week's plan will use up the stock"}
+                      </div>
+                    </div>
+                    <div className="yn-row">
+                      <button
+                        className={shoppingList.some((e) => e.itemId === item.id)
+                          ? "btn btn-primary btn-sm added"
+                          : "btn btn-primary btn-sm"}
+                        onClick={() => onToggleShoppingList(item.id)}
+                      >
+                        Yes, buy
+                      </button>
+                      <button className="btn btn-ghost btn-sm" onClick={() => onSnoozeLow(item.id)}>
+                        Not now
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </>
           )}
 
           {uncertain.length > 0 && (

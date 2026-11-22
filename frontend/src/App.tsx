@@ -18,6 +18,7 @@ import {
   fetchReceipts,
   fetchRecipes,
   fetchSettings,
+  snoozeLow,
   fetchShoppingList,
   addItemBarcode,
   createItem,
@@ -191,6 +192,13 @@ export default function App() {
       .catch(console.error);
   };
 
+  // "Not now" on the projected prompt: hides it until the estimate drops
+  // below its level at dismissal (planning more meals re-raises it).
+  const snoozeRunningLow = (id: string) => {
+    setItems((prev) => prev.map((i) => (i.id !== id ? i : { ...i, lowProjected: false })));
+    snoozeLow(id).then(mergeItem).catch(console.error);
+  };
+
   const removeItem = (id: string) => {
     setItems((prev) => prev.filter((i) => i.id !== id));
     deleteItem(id)
@@ -355,6 +363,7 @@ export default function App() {
             onPushShoppingList={pushShoppingList}
             onSaveSettings={saveSettings}
             onConfirmLow={confirmRunningLow}
+            onSnoozeLow={snoozeRunningLow}
             theme={theme}
             onToggleTheme={toggleTheme}
           />

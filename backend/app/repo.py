@@ -4,6 +4,8 @@ import re
 import uuid
 
 from . import catalog
+from . import estimate
+from . import naming
 from . import naming
 from .db import get_db
 
@@ -76,8 +78,7 @@ def _derive_package_count(item: dict) -> int | None:
 
 def _attach_barcodes(items: list[dict]) -> list[dict]:
     """Every item gains `barcodes` (all of them) and `barcode` (the primary,
-    first-assigned one — kept for the single-label UI and API compatibility),
-    plus the derived whole-package `package_count`."""
+    first-assigned one), plus the derived whole-package `package_count`."""
     with get_db() as db:
         by_item = _barcodes_for(db, [i["id"] for i in items])
     for item in items:
@@ -89,6 +90,21 @@ def _attach_barcodes(items: list[dict]) -> list[dict]:
             meta = catalog.CONCEPTS.get(concept)
             item["concept_label"] = meta["de"] if meta else None
         item["auto_restock"] = bool(item.get("auto_restock", 0))
+    return _attach_estimates(items)
+
+
+def _attach_estimates(items: list[dict]) -> list[dict]:
+    """Every item gains the stock projection: `estimate` (quantity minus
+    what planned, un-cooked meals still need), `committed` (that need),
+    `low` (hard fact, unchanged semantics) and `low_projected` (the
+    plan-driven dip that asks the Home prompt, snooze-aware)."""
+    projections = estimate.projections(items)
+    for item in items:
+        projection = projections.get(item["id"], {})
+        item["estimate"] = projection.get("estimate", item["quantity"])
+        item["committed"] = projection.get("committed", 0.0)
+        item["low"] = projection.get("low", False)
+        item["low_projected"] = projection.get("low_projected", False)
     return items
 
 
@@ -96,6 +112,24 @@ def list_items() -> list[dict]:
     with get_db() as db:
         rows = db.execute("SELECT * FROM items ORDER BY name").fetchall()
     return _attach_barcodes([dict(r) for r in rows])
+
+
+def snooze_low(item_id: str) -> dict | None:
+    """Dismiss the might-be-running-low prompt until the estimate drops
+    below its level at dismissal (planning more meals re-raises it)."""
+    return _snooze_estimate(item_id)
+
+
+def _snooze_estimate(item_id: str) -> dict | None:
+    item = get_item(item_id)
+    if not item:
+        return None
+    with get_db() as db:
+        db.execute(
+            "UPDATE items SET snooze_estimate = ? WHERE id = ?",
+            (item["estimate"], item_id),
+        )
+    return get_item(item_id)
 
 
 def get_item(item_id: str) -> dict | None:
