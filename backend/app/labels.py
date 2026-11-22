@@ -128,16 +128,17 @@ def _qr_image(content: str, box_px: int) -> Image.Image:
 
 
 def _ean_image(code: str, height_px: int) -> tuple[Image.Image, bool]:
-    """EAN-13 barcode rendered via python-barcode, white margins cropped."""
+    """EAN-13 barcode rendered via python-barcode, white margins cropped.
+    Bars only — no human-readable digits underneath (the label/table shows
+    them separately; on tape they'd just eat height)."""
     code = re.sub(r"\D", "", code)
     if len(code) != 13:
         return _new_canvas(1, 1), False
     try:
         buffer = io.BytesIO()
         barcode_lib.EAN13(code, writer=ImageWriter()).write(buffer, options={
+            "write_text": False,
             "module_height": max(height_px // 10, 8),
-            "font_size": max(height_px // 6, 10),
-            "text_distance": 3,
             "quiet_zone": 2,
         })
         buffer.seek(0)

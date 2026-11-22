@@ -3,7 +3,6 @@ import type { ControlCodeInfo, CustomLabelDesign, Item, LabelElement, LabelField
 import { LABEL_FIELDS } from "../types";
 import { fetchLabelPreviewUrl, fetchControlCustomLabel, fetchItemCustomLabel,
          saveControlCustomLabel, saveItemCustomLabel } from "../api";
-import { IconX } from "./Icons";
 import { TAPE_PRINTABLE, designHeightMm, elementText, fieldValues, newElementId, LABEL_PRESETS as PRESETS } from "../lib/labels";
 
 export type LabelEditorTarget =
@@ -506,9 +505,6 @@ export default function LabelEditor({ target, onClose, onSaved }: LabelEditorPro
         </div>
       </div>
 
-      <button className="label-editor-close icon-btn" onClick={close} aria-label="Close editor">
-        <IconX size={18} />
-      </button>
     </div>
   );
 }

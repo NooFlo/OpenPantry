@@ -2363,7 +2363,9 @@ button.summary-card {
 .label-editor-overlay {
   position: fixed;
   inset: 0;
-  z-index: 60;
+  /* above the item sheets (sheet z-100, nested alarm sheet z-110): opening
+     the editor fully replaces the item's submenu for the time being */
+  z-index: 120;
   background: var(--bg);
   display: flex;
   flex-direction: column;
@@ -2385,11 +2387,6 @@ button.summary-card {
   border-bottom: 1px solid var(--border);
 }
 
-.label-editor-close {
-  position: absolute;
-  top: 18px;
-  right: 20px;
-}
 
 .label-editor-note {
   color: var(--accent);
