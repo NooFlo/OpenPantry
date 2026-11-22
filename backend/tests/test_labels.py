@@ -111,6 +111,31 @@ def test_render_skips_unresolvable_fields():
     assert img.size[0] > 0  # does not raise
 
 
+def test_ean_element_fills_box_width():
+    """The EAN graphic spans its element box edge to edge (like the editor
+    canvas) instead of thumbnail-fitting narrow and centered."""
+    elements = [{"id": "cap", "field": "name", "x": 1, "y": 1, "w": 48, "h": 6,
+                 "fontSizePt": 14, "text": ""},
+                {"id": "code", "field": "ean", "x": 1, "y": 9, "w": 48, "h": 8,
+                 "fontSizePt": 0, "text": ""}]
+    data = {"name": "BOUGHT", "category": "", "barcode": "", "qr": "",
+            "ean": "2000000000008"}
+    img = labels.render_custom_label(elements, data, 50, 24).convert("L")
+    top = labels.TAPE_GEOMETRY[24]["top"] * labels.PX_PER_MM
+    scale = labels.PX_PER_MM
+    band_y0, band_y1 = int(top + 9 * scale), int(top + 17 * scale)
+    x0, x1 = int(1 * scale), int(49 * scale)  # element box 1..49 mm
+
+    def column_dark(x: int) -> bool:
+        return any(img.getpixel((x, y)) < 120
+                   for y in range(band_y0, band_y1))
+
+    assert column_dark(x0), "EAN must reach its box's left edge"
+    assert column_dark(x1 - 1), "EAN must reach its box's right edge"
+    # and something white in between: the bars are scaled, not smeared solid
+    assert any(not column_dark(x) for x in range(x0, x1))
+
+
 # ------------------------------------------------------ item design lifecycle
 
 

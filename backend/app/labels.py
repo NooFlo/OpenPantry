@@ -130,10 +130,14 @@ def _qr_image(content: str, box_px: int) -> Image.Image:
     return img.resize((box_px, box_px), Image.NEAREST)
 
 
-def _ean_image(code: str, height_px: int) -> tuple[Image.Image, bool]:
+def _ean_image(code: str, height_px: int,
+               width_px: int | None = None) -> tuple[Image.Image, bool]:
     """EAN-13 barcode rendered via python-barcode, white margins cropped.
     Bars only — no human-readable digits underneath (the label/table shows
-    them separately; on tape they'd just eat height)."""
+    them separately; on tape they'd just eat height). With width_px the
+    bars stretch to fill the element box exactly (like the editor canvas
+    does), which keeps the code scannable: every module scales by the same
+    factor."""
     code = re.sub(r"\D", "", code)
     if len(code) != 13:
         return _new_canvas(1, 1), False
@@ -152,6 +156,8 @@ def _ean_image(code: str, height_px: int) -> tuple[Image.Image, bool]:
     bbox = gray.point(lambda p: 0 if p > 240 else 255).getbbox()
     if bbox:
         img = img.crop(bbox)
+    if width_px:
+        img = img.resize((width_px, height_px), Image.NEAREST)
     return img, True
 
 
@@ -256,12 +262,10 @@ def render_custom_label(elements: list[dict], data: dict,
             canvas.paste(img, (box_x + (box_w - side) // 2, box_y + (box_h - side) // 2))
         elif field == "ean":
             code = data.get("ean") or ""
-            img, rendered = _ean_image(code, box_h)
+            img, rendered = _ean_image(code, box_h, box_w)
             if not rendered:
                 continue
-            img.thumbnail((box_w, box_h), Image.LANCZOS)
-            canvas.paste(img, (box_x + (box_w - img.width) // 2,
-                               box_y + (box_h - img.height) // 2))
+            canvas.paste(img, (box_x, box_y))
         elif field in LABEL_FIELDS:
             value = _resolve_field(field, data, element)
             text_img = _text_in_box(value, float(element.get("fontSizePt") or 10),
