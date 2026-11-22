@@ -30,13 +30,20 @@ export function stepAmount(item: Item): number {
 }
 
 /** Mode-aware stock label: "In stock" / "Not in stock", or whole counts.
- *  Volume/weight items show packages ("2×" = two bottles); piece items
- *  show pieces ("4 pcs"). No fractional liters or grams anywhere. */
+ *  Every qty item counts whole pieces — packets, bottles, packs. No
+ *  fractional liters or grams anywhere. */
 export function formatStock(item: Item): string {
   if (isBinary(item)) return isInStock(item) ? "In stock" : "Not in stock";
-  if (item.unit === "pcs") {
-    if (item.quantity > 0 && item.quantity < 1) return `<1 ${item.unit}`;
-    return `${packageCount(item)} ${item.unit}`;
+  if (item.quantity > 0 && item.quantity < 1 && item.unit === "pcs") {
+    return `<1 ${item.unit}`;
   }
-  return `${packageCount(item)}×`;
+  return `${packageCount(item)} pcs`;
+}
+
+/** The alarm threshold as whole pieces/packages — what the user sets and
+ *  sees; internally min_quantity stays physical. */
+export function alarmCount(item: Item): number {
+  if (item.minQuantity <= 0) return 0;
+  if (item.unit === "pcs") return Math.round(item.minQuantity);
+  return Math.max(1, Math.round(item.minQuantity / (item.packageSize || 1)));
 }

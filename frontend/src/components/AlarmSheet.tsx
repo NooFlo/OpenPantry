@@ -5,7 +5,7 @@ import { resolveConcept } from "../api";
 import Sheet from "./Sheet";
 import StepperRow, { stepSize } from "./StepperRow";
 import { IconBarcode, IconPlus, IconX } from "./Icons";
-import { isBinary } from "../lib/tracking";
+import { alarmCount, isBinary } from "../lib/tracking";
 
 interface ItemSettingsProps {
   item: Item;
@@ -67,9 +67,14 @@ export function ItemSettings({ item, onUpdate, onAddBarcode, onRemoveBarcode }: 
     setBarcodeDraft("");
   };
 
+  // the alarm counts whole packets/bottles, never tenth-kilos
+  const alarmPieces = item.unit === "pcs";
   const stepAlarm = (direction: -1 | 1) => {
-    const next = Math.max(0, round(item.minQuantity + direction * step));
-    onUpdate(item.id, { min_quantity: next });
+    const nextCount = Math.max(0, alarmCount(item) + direction);
+    const physical = alarmPieces
+      ? nextCount
+      : Math.round(nextCount * (item.packageSize || 1) * 10000) / 10000;
+    onUpdate(item.id, { min_quantity: physical });
   };
 
   const stepPackage = (direction: -1 | 1) => {
@@ -126,9 +131,9 @@ export function ItemSettings({ item, onUpdate, onAddBarcode, onRemoveBarcode }: 
       {!binary && (
         <StepperRow
           label="Alarm at"
-          hint={item.minQuantity > 0 ? "Added automatically when stock falls to this" : "Disabled"}
-          value={item.minQuantity}
-          unit={item.unit}
+          hint={item.minQuantity > 0 ? "How many packets/pieces may be left before it goes on the shopping list" : "Disabled"}
+          value={alarmCount(item)}
+          unit="pcs"
           active={item.minQuantity > 0}
           onStep={stepAlarm}
         />

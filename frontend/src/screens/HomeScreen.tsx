@@ -94,8 +94,8 @@ export default function HomeScreen({
                         {isBinary(item)
                           ? "Not in stock"
                           : item.unit === "pcs"
-                            ? `${packageCount(item)} / ${item.minQuantity} ${item.unit}`
-                            : `${packageCount(item)}\u00d7${item.minQuantity > 0 ? ` / ${Math.max(1, Math.round(item.minQuantity / (item.packageSize || 1)))}\u00d7` : ""}`}
+                            ? `${packageCount(item)} pcs / ${Math.max(0, Math.round(item.minQuantity))} pcs`
+                            : `${packageCount(item)} pcs${item.minQuantity > 0 ? ` / ${Math.max(1, Math.round(item.minQuantity / (item.packageSize || 1)))} pcs` : ""}`}
                       </div>
                       <StockBar item={item} />
                     </div>
@@ -125,7 +125,7 @@ export default function HomeScreen({
                           ? "May have been used while cooking"
                           : item.unit === "pcs"
                             ? `est. ${packageCount(item)} ${item.unit} left after cooking`
-                            : `est. ${packageCount(item)}\u00d7 left after cooking`}
+                            : `est. ${packageCount(item)} pcs left after cooking`}
                       </div>
                     </div>
                     <div className="yn-row">
