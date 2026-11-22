@@ -1,6 +1,6 @@
 # OpenPantry
 
-Self-hosted home food and consumables inventory. Runs on a Rock 5A (16 GB) on the LAN.
+Self-hosted home food and consumables inventory.
 
 ## How it works
 
