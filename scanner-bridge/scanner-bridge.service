@@ -1,0 +1,26 @@
+# OpenPantry USB scanner bridge — Rock5 systemd unit
+#
+# Install (adjust the --url and --device lines first):
+#   sudo cp scanner-bridge.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now scanner-bridge
+#   journalctl -u scanner-bridge -f      # live scan log
+
+[Unit]
+Description=OpenPantry USB scanner bridge (keyboard-wedge)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+# /opt/openpantry is the usual checkout path on the Rock5 — point this at
+# wherever the repo lives (or just copy scanner_bridge.py somewhere stable).
+ExecStart=/usr/bin/python3 /opt/openpantry/scanner-bridge/scanner_bridge.py \
+    --url http://localhost:8321 \
+    --device /dev/input/by-id/usb-YOUR_SCANNER-event-kbd
+Restart=always
+RestartSec=3
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
