@@ -298,9 +298,26 @@ def _jpeg_b64(img: Image.Image) -> str:
     return base64.b64encode(buffer.getvalue()).decode()
 
 
+def _printable_strip(img: Image.Image, tape_mm: int) -> Image.Image:
+    """Crop a full-tape label canvas down to the printable strip.
+
+    The Epson print engine refuses to print into the head's dead margins and
+    shrink-to-fits each object box into the printable band: a bitmap carrying
+    the tape's dead margins gets printed smaller than designed. Exports must
+    therefore carry the printable strip only, with the object box aspect equal
+    to the bitmap aspect."""
+    tape = tape_mm if tape_mm in TAPE_GEOMETRY else 24
+    geo = TAPE_GEOMETRY[tape]
+    ppm = img.height / tape  # full-tape canvas convention
+    top_px, height_px = round(geo["top"] * ppm), round(geo["printable"] * ppm)
+    return img.crop((0, top_px, img.width, top_px + height_px))
+
+
 def generate_lemd(images: list[Image.Image], tape_mm: int = 24) -> str:
     """Stitch label images into one Epson Label Editor mobile (.lemd) strip,
-    dash-separated for cutting."""
+    dash-separated for cutting. Input images are full-tape canvases as
+    rendered by render_custom_label; they are cropped to the printable strip
+    so the placed object is print-true (see _printable_strip)."""
     tape = tape_mm if tape_mm in TAPE_GEOMETRY else 24
     geo = TAPE_GEOMETRY[tape]
     top_y, bottom_y = geo["top"], geo["top"] + geo["printable"]
@@ -328,8 +345,9 @@ def generate_lemd(images: list[Image.Image], tape_mm: int = 24) -> str:
 
     objects = []
     for index, img in enumerate(images):
-        image_width_mm = tape * (img.width / img.height)
-        objects.append(image_object(_jpeg_b64(img), current_x, image_width_mm))
+        strip = _printable_strip(img, tape)
+        image_width_mm = geo["printable"] * (strip.width / strip.height)
+        objects.append(image_object(_jpeg_b64(strip), current_x, image_width_mm))
         current_x += image_width_mm
         if index < len(images) - 1:
             line_x = current_x + cut_margin_mm / 2 - 1.0

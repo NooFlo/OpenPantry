@@ -1,3 +1,5 @@
+import base64
+import io
 import json
 import os
 import sys
@@ -10,6 +12,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 os.environ.setdefault("PANTRY_DB", os.path.join(tempfile.mkdtemp(), "test.db"))
 
 from fastapi.testclient import TestClient  # noqa: E402
+from PIL import Image  # noqa: E402
 
 from app import labels, seed  # noqa: E402
 from app.db import init_db  # noqa: E402
@@ -264,6 +267,29 @@ def test_lemd_object_width_equals_design_width():
     # and the content sits inside the printable strip (top offset 2.95 mm)
     assert points[0]["y"] == 2.95
     assert points[1]["y"] == round(2.95 + 18.1, 2)
+
+
+def test_lemd_print_pipeline_gets_print_true_bitmaps():
+    """Regression: Epson's print path shrink-to-fits each bitmap into its
+    object box instead of stretching, so the embedded bitmap must be cropped
+    to the printable strip (18.1 mm of a 24 mm tape) — aspect equal to the
+    points box — or every label prints at 18.1/24 = 75% size."""
+    image = labels.render_custom_label(labels.default_elements(24),
+                                       {"name": "Salz", "category": "",
+                                        "barcode": "", "qr": "http://x/c/salz",
+                                        "ean": ""}, 50, 24)
+    payload = json.loads(labels.generate_lemd([image], 24))
+    obj = payload["object_list"][0]
+    points = obj["block_info"]["points"]
+    box_w = points[1]["x"] - points[0]["x"]
+    box_h = points[1]["y"] - points[0]["y"]
+    embedded = Image.open(io.BytesIO(base64.b64decode(obj["image"]["source"])))
+    # printable strip, not the full 24 mm tape
+    assert embedded.height == round(labels.TAPE_GEOMETRY[24]["printable"]
+                                    * labels.PX_PER_MM)
+    assert abs((embedded.width / embedded.height) - (box_w / box_h)) < 0.02
+    # a 50 mm design must still place as exactly 50 mm
+    assert abs(box_w - 50.0) < 0.2
 
 
 # ------------------------------------------------------------ Epson export
