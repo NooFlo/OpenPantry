@@ -2782,24 +2782,65 @@ button.summary-card {
   background: rgba(0, 0, 0, 0.45);
 }
 
-/* planning: favorites + all-recipes pickers */
-.plan-pickers {
+/* planning: collapsible favorites / all-recipes groups */
+.plan-group {
   display: flex;
   flex-direction: column;
   gap: 6px;
 }
 
-.plan-select {
+.plan-group-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
   border: 1px solid var(--border);
   border-radius: 10px;
   padding: 8px 10px;
   font-size: 14px;
+  font-weight: 600;
   background: var(--bg);
   color: var(--text);
   cursor: pointer;
-  width: 100%;
 }
 
-.plan-select:hover {
+.plan-group-head:hover {
   border-color: var(--accent);
+}
+
+.plan-group-title {
+  flex: 1;
+  text-align: left;
+}
+
+.plan-group-count {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-2);
+  background: var(--surface-2);
+  border-radius: 999px;
+  padding: 1px 8px;
+}
+
+.plan-group-chevron {
+  display: inline-flex;
+  transform: rotate(-90deg);
+  transition: transform 140ms ease;
+  color: var(--text-2);
+  font-size: 15px;
+  line-height: 1;
+}
+
+.plan-group-chevron.open {
+  transform: rotate(90deg);
+}
+
+.plan-pick-star {
+  color: #f5b301;
+}
+
+.plan-pick-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }

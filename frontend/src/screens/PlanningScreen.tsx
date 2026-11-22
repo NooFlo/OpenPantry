@@ -18,7 +18,7 @@ import {
 import Sheet from "../components/Sheet";
 import StepperRow from "../components/StepperRow";
 import ThemeToggle from "../components/ThemeToggle";
-import { IconPlus, IconX } from "../components/Icons";
+import { IconPlus, IconStar, IconX } from "../components/Icons";
 
 const DAY_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 const MEAL_SUGGESTIONS = ["Breakfast", "Lunch", "Dinner", "Snack"];
@@ -66,6 +66,8 @@ export default function PlanningScreen({ recipes, theme, onToggleTheme }: Planni
   const [shoppingEntries, setShoppingEntries] = useState<PlanShoppingEntry[] | null>(null);
   const [pushed, setPushed] = useState(false);
   const [editingMeal, setEditingMeal] = useState<string | null>(null);
+  const [favOpen, setFavOpen] = useState(false);
+  const [allOpen, setAllOpen] = useState(true);
 
   useEffect(() => {
     fetchWeekPlan(week).then(setPlan).catch(console.error);
@@ -191,54 +193,46 @@ export default function PlanningScreen({ recipes, theme, onToggleTheme }: Planni
             </div>
           )}
           <h2 className="section-title">Recipes</h2>
-          <div className="plan-pickers">
-            <select
-              className="plan-select"
-              value=""
-              aria-label="Choose from favorite recipes"
-              onChange={(e) => {
-                if (e.target.value) openFill({ kind: "recipe", id: e.target.value });
-                e.target.value = "";
-              }}
+          <div className="plan-group">
+            <button
+              className="plan-group-head"
+              aria-expanded={favOpen}
+              onClick={() => setFavOpen((v) => !v)}
             >
-              <option value="">★ Favorites…</option>
-              {favorites.map((r) => (
-                <option key={r.id} value={r.id}>
-                  {r.title}
-                </option>
-              ))}
-            </select>
-            <select
-              className="plan-select"
-              value=""
-              aria-label="Choose from all recipes"
-              onChange={(e) => {
-                if (e.target.value) openFill({ kind: "recipe", id: e.target.value });
-                e.target.value = "";
-              }}
-            >
-              <option value="">All recipes…</option>
-              {recipes.map((r) => (
-                <option key={r.id} value={r.id}>
-                  {r.title}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div className="plan-menu-list">
-            {recipes.map((r) => (
-              <div
-                key={r.id}
-                className="plan-pick"
-                draggable
-                onDragStart={(e) => e.dataTransfer.setData("text/plain", `recipe:${r.id}`)}
-                onClick={() => openFill({ kind: "recipe", id: r.id })}
-                title="Drop on a meal field to place directly — or tap for options"
-              >
-                {r.title}
+              <IconStar size={14} filled />
+              <span className="plan-group-title">Favorites</span>
+              <span className="plan-group-count">{favorites.length}</span>
+              <span className={favOpen ? "plan-group-chevron open" : "plan-group-chevron"}>‹</span>
+            </button>
+            {favOpen && (
+              <div className="plan-menu-list">
+                {favorites.map((r) => (
+                  <RecipePick key={r.id} recipe={r} onPick={() => openFill({ kind: "recipe", id: r.id })} />
+                ))}
+                {favorites.length === 0 && (
+                  <div className="plan-empty">Star recipes to pin them here.</div>
+                )}
               </div>
-            ))}
-            {recipes.length === 0 && <div className="plan-empty">No recipes saved yet.</div>}
+            )}
+          </div>
+          <div className="plan-group">
+            <button
+              className="plan-group-head"
+              aria-expanded={allOpen}
+              onClick={() => setAllOpen((v) => !v)}
+            >
+              <span className="plan-group-title">All recipes</span>
+              <span className="plan-group-count">{recipes.length}</span>
+              <span className={allOpen ? "plan-group-chevron open" : "plan-group-chevron"}>‹</span>
+            </button>
+            {allOpen && (
+              <div className="plan-menu-list">
+                {recipes.map((r) => (
+                  <RecipePick key={r.id} recipe={r} onPick={() => openFill({ kind: "recipe", id: r.id })} />
+                ))}
+                {recipes.length === 0 && <div className="plan-empty">No recipes saved yet.</div>}
+              </div>
+            )}
           </div>
         </aside>
 
@@ -854,5 +848,21 @@ function WeekListSheet({
         </button>
       </div>
     </Sheet>
+  );
+}
+
+/** Drag-and-drop recipe row inside a collapsible plan group. */
+function RecipePick({ recipe, onPick }: { recipe: Recipe; onPick: () => void }) {
+  return (
+    <div
+      className="plan-pick"
+      draggable
+      onDragStart={(e) => e.dataTransfer.setData("text/plain", `recipe:${recipe.id}`)}
+      onClick={onPick}
+      title="Drop on a meal field to place directly — or tap for options"
+    >
+      {recipe.favorite && <IconStar size={13} filled className="plan-pick-star" />}
+      <span className="plan-pick-name">{recipe.title}</span>
+    </div>
   );
 }
