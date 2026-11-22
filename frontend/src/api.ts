@@ -55,6 +55,11 @@ export function createItem(payload: ItemCreatePayload): Promise<Item> {
   return request<Item>("/items", { method: "POST", body: JSON.stringify(payload) });
 }
 
+/** Autocomplete suggestions for the tag picker ("zimt" -> Zimt, Zimtstangen…). */
+export function searchConcepts(q: string): Promise<{ results: { conceptId: string; label: string; alias: string | null }[] }> {
+  return request(`/catalog/search?q=${encodeURIComponent(q)}`);
+}
+
 /** Alias -> concept for the tag picker ("cinnamon sticks" -> Zimtstangen). */
 export function resolveConcept(name: string): Promise<{ conceptId: string | null; label: string | null; family: string | null }> {
   return request(`/catalog/resolve?name=${encodeURIComponent(name)}`);

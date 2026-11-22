@@ -830,6 +830,39 @@ def resolve(name: str) -> tuple[str | None, str]:
     return None, text
 
 
+def search_concepts(query: str, limit: int = 8) -> list[dict]:
+    """Autocomplete for the tag picker: concepts whose label or alias
+    contains the typed text. Prefix hits come first — labels before
+    aliases — then substring hits; the shortest match wins within each
+    tier, so "zimt" surfaces Zimt before Zimtstangen."""
+    q = _norm(query)
+    if not q:
+        return []
+    best: dict[str, tuple[int, int, str]] = {}  # concept -> (tier, len, matched)
+    for cid, concept in CONCEPTS.items():
+        variants = [concept["de"], concept["en"], *concept.get("aliases", [])]
+        for text in variants:
+            n = _norm(text)
+            if not n:
+                continue
+            if n == q or n.startswith(q):
+                is_label = text in (concept["de"], concept["en"])
+                key = (0 if is_label else 1, len(n), n)
+            elif q in n:
+                key = (2, len(n), n)
+            else:
+                continue
+            if cid not in best or key < best[cid]:
+                best[cid] = key
+    ranked = sorted(best.items(), key=lambda kv: kv[1])[:limit]
+    out = []
+    for cid, (_, _, matched) in ranked:
+        meta = CONCEPTS[cid]
+        alias = matched if matched not in (_norm(meta["de"]), _norm(meta["en"])) else None
+        out.append({"concept_id": cid, "label": meta["de"], "alias": alias})
+    return out
+
+
 def resolve_item_concept(item) -> str | None:
     """Inventory item dict -> concept key via aliases (exact, then
     guarded containment). Branded suffixed names ("Bio Natives Olivenöl

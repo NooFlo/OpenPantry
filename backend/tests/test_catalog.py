@@ -281,6 +281,25 @@ def test_catalog_resolve_helper(client):
     assert r.status_code == 200 and r.json()["conceptId"] is None
 
 
+def test_catalog_search(client):
+    r = client.get("/api/catalog/search", params={"q": "zimt"})
+    assert r.status_code == 200
+    hits = r.json()["results"]
+    assert hits and hits[0]["label"] == "Zimt"
+    # german label, english label and aliases all surface the same node
+    for q, expected in (("dry yeast", "yeast"), ("trockenhefe", "yeast"), ("hefe", "yeast")):
+        r = client.get("/api/catalog/search", params={"q": q})
+        assert r.status_code == 200
+        hits = r.json()["results"]
+        assert hits and hits[0]["conceptId"] == expected, (q, hits)
+        assert hits[0]["label"] == "Hefe"
+    # empty / nonsense input
+    assert client.get("/api/catalog/search", params={"q": ""}).json()["results"] == []
+    assert client.get("/api/catalog/search", params={"q": "qzzkx"}).json()["results"] == []
+    # bounded
+    assert len(client.get("/api/catalog/search", params={"q": "e"}).json()["results"]) <= 8
+
+
 def test_manual_create_without_category_uses_family(client):
     response = client.post("/api/items", json={"name": "Gochujang"})
     assert response.status_code == 200

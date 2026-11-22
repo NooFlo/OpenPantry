@@ -967,6 +967,13 @@ def _push_to_ha():
     return hass.sync(repo.list_shopping_list())
 
 
+@app.get("/api/catalog/search")
+def catalog_search(q: str = ""):
+    """Autocomplete suggestions for the tag picker: concepts whose label
+    or alias contains the typed text, best matches first."""
+    return camelize({"results": catalog.search_concepts(q)})
+
+
 @app.get("/api/catalog/resolve")
 def catalog_resolve(name: str):
     """Alias -> concept, for the item-detail tag picker. Unknown input

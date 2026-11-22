@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { ControlCodeInfo, CustomLabelInfo, Item, ItemCreatePayload, ItemPatch, ModelList, Receipt, Settings, SettingsPatch } from "../types";
+import { CANONICAL_CATEGORIES } from "../types";
 import {
   deleteItemCustomLabel,
   fetchCustomLabelInfos,
@@ -103,6 +104,14 @@ export default function InventoryScreen({ items, receipts, onConsume, onRestock,
   };
 
   const categories = useMemo(() => [...new Set(items.map((i) => i.category))], [items]);
+  // canonical order first, then customs alphabetically — picker suggestions
+  const categorySuggestions = useMemo(
+    () => [
+      ...CANONICAL_CATEGORIES.filter((c) => categories.includes(c)),
+      ...categories.filter((c) => !CANONICAL_CATEGORIES.includes(c)).sort(),
+    ],
+    [categories]
+  );
 
   const filtered = items
     .filter((i) => (category === null ? true : i.category === category))
@@ -295,6 +304,7 @@ export default function InventoryScreen({ items, receipts, onConsume, onRestock,
         <div className="detail-settings">
           <ItemSettings item={selectedLive} onUpdate={onUpdateItem}
                         onAddBarcode={onAddItemBarcode} onRemoveBarcode={onRemoveItemBarcode}
+                        categories={categorySuggestions}
                         hasCustomLabel={hasCustomLabel(selectedLive.id)}
                         onToggleCustomLabel={toggleCustomLabel}
                         onEditCustomLabel={editItemLabel} />
@@ -406,6 +416,7 @@ export default function InventoryScreen({ items, receipts, onConsume, onRestock,
           onToggleCustomLabel={toggleCustomLabel}
           onEditCustomLabel={editItemLabel}
           onClose={() => setAlarmsOpen(false)}
+          categories={categorySuggestions}
         />
       )}
 
@@ -421,7 +432,7 @@ export default function InventoryScreen({ items, receipts, onConsume, onRestock,
       )}
 
       {addItemOpen && (
-        <AddItemSheet onAddItem={onAddItem} onClose={() => setAddItemOpen(false)} />
+        <AddItemSheet onAddItem={onAddItem} onClose={() => setAddItemOpen(false)} categories={categorySuggestions} />
       )}
 
       {labelEditorFor && (

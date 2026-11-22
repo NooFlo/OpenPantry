@@ -1,17 +1,21 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { Item, ItemPatch } from "../types";
 import { CANONICAL_CATEGORIES } from "../types";
 import { resolveConcept } from "../api";
+import Autocomplete from "./Autocomplete";
 import Sheet from "./Sheet";
 import StepperRow, { stepSize } from "./StepperRow";
 import { IconBarcode, IconPlus, IconTag, IconX } from "./Icons";
 import { alarmCount, isBinary } from "../lib/tracking";
+import { useConceptSearch } from "../lib/useConceptSearch";
 
 interface ItemSettingsProps {
   item: Item;
   onUpdate: (id: string, patch: ItemPatch) => void;
   onAddBarcode: (id: string, barcode: string) => void;
   onRemoveBarcode: (id: string, barcode: string) => void;
+  /** Categories already in use — autocomplete suggestions. */
+  categories: string[];
   /** Custom shelf-label design attached to this item (checkbox state). */
   hasCustomLabel: boolean;
   onToggleCustomLabel: (item: Item, enabled: boolean) => void;
@@ -25,7 +29,7 @@ function round(value: number): number {
 
 /** Tracking mode slider plus alarm/buy steppers. Rendered inline in the
  *  desktop split-detail pane and inside the AlarmSheet on mobile. */
-export function ItemSettings({ item, onUpdate, onAddBarcode, onRemoveBarcode,
+export function ItemSettings({ item, onUpdate, onAddBarcode, onRemoveBarcode, categories,
                               hasCustomLabel, onToggleCustomLabel, onEditCustomLabel }: ItemSettingsProps) {
   const step = stepSize(item.unit);
   const minBuy = item.unit === "pcs" ? 1 : 0.1;
@@ -44,6 +48,25 @@ export function ItemSettings({ item, onUpdate, onAddBarcode, onRemoveBarcode,
   }, [item.id]);
   const barcodes = item.barcodes ?? (item.barcode ? [item.barcode] : []);
   const hasCustomCategory = item.category && !CANONICAL_CATEGORIES.includes(item.category);
+
+  const conceptSearch = useConceptSearch(conceptDraft);
+  const conceptSuggestions = conceptSearch.map((c) => ({
+    key: c.conceptId,
+    title: c.label,
+    hint: c.alias ?? undefined,
+  }));
+  const categorySuggestions = useMemo(
+    () =>
+      categories
+        .filter(
+          (c) =>
+            c !== item.category &&
+            c.toLowerCase().includes(customCategory.trim().toLowerCase())
+        )
+        .slice(0, 8)
+        .map((c) => ({ key: c, title: c })),
+    [categories, customCategory, item.category]
+  );
 
   /** Look the typed alias up in the food catalog and tag the item. */
   const tagConcept = async () => {
@@ -192,30 +215,24 @@ export function ItemSettings({ item, onUpdate, onAddBarcode, onRemoveBarcode,
           )}
         </div>
         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-          <input
+          <Autocomplete
             className="import-input"
-            style={{ marginBottom: 0 }}
-            placeholder="custom category…"
+            inputStyle={{ marginBottom: 0 }}
+            placeholder="…or type a category (new ones welcome)"
             value={customCategory}
-            onChange={(e) => setCustomCategory(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && customCategory.trim()) {
+            onChange={setCustomCategory}
+            suggestions={categorySuggestions}
+            onSelect={(s) => {
+              onUpdate(item.id, { category: s.title });
+              setCustomCategory("");
+            }}
+            onEnter={() => {
+              if (customCategory.trim()) {
                 onUpdate(item.id, { category: customCategory.trim() });
                 setCustomCategory("");
               }
             }}
           />
-          <button
-            className="icon-btn"
-            aria-label="Set custom category"
-            disabled={!customCategory.trim()}
-            onClick={() => {
-              onUpdate(item.id, { category: customCategory.trim() });
-              setCustomCategory("");
-            }}
-          >
-            <IconPlus size={18} />
-          </button>
         </div>
       </div>
 
@@ -241,25 +258,21 @@ export function ItemSettings({ item, onUpdate, onAddBarcode, onRemoveBarcode,
           </p>
         )}
         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-          <input
+          <Autocomplete
             className="import-input"
-            style={{ marginBottom: 0 }}
-            placeholder="find a tag: “cinnamon sticks”, “Zimt”…"
+            inputStyle={{ marginBottom: 0 }}
+            placeholder="find a tag: “cinnamon sticks”, “Zimt”, “dry yeast”…"
             value={conceptDraft}
-            disabled={conceptBusy}
-            onChange={(e) => setConceptDraft(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") tagConcept();
+            onChange={setConceptDraft}
+            suggestions={conceptSuggestions}
+            onSelect={(s) => {
+              onUpdate(item.id, { concept_id: s.key });
+              setConceptDraft("");
+              setConceptHint(null);
             }}
+            onEnter={tagConcept}
+            disabled={conceptBusy}
           />
-          <button
-            className="icon-btn"
-            aria-label="Tag item"
-            disabled={conceptBusy || !conceptDraft.trim()}
-            onClick={tagConcept}
-          >
-            <IconPlus size={18} />
-          </button>
         </div>
         {conceptHint && (
           <p className="sheet-sub" style={{ marginTop: 6, marginBottom: 0 }}>{conceptHint}</p>
@@ -341,17 +354,20 @@ interface AlarmSheetProps {
   onToggleCustomLabel: (item: Item, enabled: boolean) => void;
   onEditCustomLabel: (item: Item) => void;
   onClose: () => void;
+  /** Categories already in use — autocomplete suggestions. */
+  categories?: string[];
 }
 
 export default function AlarmSheet({ item, onUpdate, onAddBarcode, onRemoveBarcode,
                                      hasCustomLabel, onToggleCustomLabel, onEditCustomLabel,
-                                     onClose }: AlarmSheetProps) {
+                                     onClose, categories }: AlarmSheetProps) {
   return (
     <Sheet nested onClose={onClose}>
       <h2 className="sheet-title">{item.name}</h2>
       <p className="sheet-sub">Tracking, alarm &amp; buying quantity</p>
       <ItemSettings item={item} onUpdate={onUpdate} onAddBarcode={onAddBarcode}
-                    onRemoveBarcode={onRemoveBarcode} hasCustomLabel={hasCustomLabel}
+                    onRemoveBarcode={onRemoveBarcode} categories={categories ?? CANONICAL_CATEGORIES}
+                    hasCustomLabel={hasCustomLabel}
                     onToggleCustomLabel={onToggleCustomLabel} onEditCustomLabel={onEditCustomLabel} />
       <div className="sheet-actions">
         <button className="btn btn-ghost" onClick={onClose}>

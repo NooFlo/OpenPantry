@@ -1,10 +1,12 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import type { ItemCreatePayload, Unit } from "../types";
 import { CANONICAL_CATEGORIES } from "../types";
 import { resolveConcept } from "../api";
+import Autocomplete from "./Autocomplete";
 import Sheet from "./Sheet";
 import StepperRow, { stepSize } from "./StepperRow";
-import { IconPlus, IconX } from "./Icons";
+import { IconX } from "./Icons";
+import { useConceptSearch } from "../lib/useConceptSearch";
 
 const UNITS: Unit[] = ["g", "kg", "ml", "l", "pcs"];
 
@@ -15,11 +17,13 @@ function round(value: number): number {
 interface AddItemSheetProps {
   onAddItem: (payload: ItemCreatePayload) => Promise<void>;
   onClose: () => void;
+  /** Categories already in use — autocomplete suggestions. */
+  categories?: string[];
 }
 
 /** Manual item creation with every attribute: name, category, tag,
  *  tracking mode, stock and alarm thresholds, package sizes, barcode. */
-export default function AddItemSheet({ onAddItem, onClose }: AddItemSheetProps) {
+export default function AddItemSheet({ onAddItem, onClose, categories }: AddItemSheetProps) {
   const [name, setName] = useState("");
   const [category, setCategory] = useState("Pantry");
   const [customCategory, setCustomCategory] = useState("");
@@ -40,6 +44,25 @@ export default function AddItemSheet({ onAddItem, onClose }: AddItemSheetProps) 
 
   const step = stepSize(unit);
   const finalCategory = customCategory.trim() || category;
+
+  const conceptSearch = useConceptSearch(conceptDraft);
+  const conceptSuggestions = conceptSearch.map((c) => ({
+    key: c.conceptId,
+    title: c.label,
+    hint: c.alias ?? undefined,
+  }));
+  const categorySuggestions = useMemo(
+    () =>
+      (categories ?? CANONICAL_CATEGORIES)
+        .filter(
+          (c) =>
+            c !== finalCategory &&
+            c.toLowerCase().includes(customCategory.trim().toLowerCase())
+        )
+        .slice(0, 8)
+        .map((c) => ({ key: c, title: c })),
+    [categories, customCategory, finalCategory]
+  );
 
   /** Look the typed alias up in the food catalog. */
   const findConcept = async () => {
@@ -124,13 +147,20 @@ export default function AddItemSheet({ onAddItem, onClose }: AddItemSheetProps) 
           </button>
         )}
       </div>
-      <input
-        className="import-input"
-        style={{ marginBottom: 0, marginTop: 8 }}
-        placeholder="…or type a custom category"
-        value={customCategory}
-        onChange={(e) => setCustomCategory(e.target.value)}
-      />
+      <div style={{ marginTop: 8 }}>
+        <Autocomplete
+          className="import-input"
+          inputStyle={{ marginBottom: 0 }}
+          placeholder="…or type a category (new ones welcome)"
+          value={customCategory}
+          onChange={setCustomCategory}
+          suggestions={categorySuggestions}
+          onSelect={(s) => {
+            setCategory(s.title);
+            setCustomCategory("");
+          }}
+        />
+      </div>
 
       <p className="sheet-sub">Food tag (optional — found automatically from the name if left alone)</p>
       {conceptId ? (
@@ -149,20 +179,22 @@ export default function AddItemSheet({ onAddItem, onClose }: AddItemSheetProps) 
         </div>
       ) : null}
       <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-        <input
+        <Autocomplete
           className="import-input"
-          style={{ marginBottom: 0 }}
-          placeholder="find a tag: “cinnamon sticks”, “Zimt”…"
+          inputStyle={{ marginBottom: 0 }}
+          placeholder="find a tag: “cinnamon sticks”, “Zimt”, “dry yeast”…"
           value={conceptDraft}
-          disabled={conceptBusy}
-          onChange={(e) => setConceptDraft(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") findConcept();
+          onChange={setConceptDraft}
+          suggestions={conceptSuggestions}
+          onSelect={(s) => {
+            setConceptId(s.key);
+            setConceptLabel(s.title);
+            setConceptDraft("");
+            setConceptHint(null);
           }}
+          onEnter={findConcept}
+          disabled={conceptBusy}
         />
-        <button className="icon-btn" aria-label="Find tag" disabled={conceptBusy || !conceptDraft.trim()} onClick={findConcept}>
-          <IconPlus size={18} />
-        </button>
       </div>
       {conceptHint && <p className="sheet-sub" style={{ marginTop: 6, marginBottom: 0 }}>{conceptHint}</p>}
 
