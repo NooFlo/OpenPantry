@@ -348,6 +348,34 @@ def test_catalog_search(client):
     assert len(client.get("/api/catalog/search", params={"q": "e"}).json()["results"]) <= 8
 
 
+def test_pecorino_grana_stay_separate(client):
+    """Parmesan (incl. grana padano) and pecorino are related but distinct:
+    separate concepts so scan-time stock never merges them, sibling links
+    so recipes still cross-suggest instead of claiming identity."""
+    assert catalog.resolve("grana padano")[0] == "cheese_parmesan"
+    assert catalog.resolve("grana padano hartkase")[0] == "cheese_parmesan"
+    assert catalog.resolve("Pecorino Romano")[0] == "cheese_pecorino"
+    assert catalog.resolve("pecorino")[0] == "cheese_pecorino"
+    # item-side: two separate stock keys, never one
+    items = [
+        {"id": "g1", "name": "Grana Padano Hartkäse", "quantity": 0.2},
+        {"id": "p1", "name": "Pecorino Romano", "quantity": 0.2},
+    ]
+    stocked = catalog.stock_map(items)
+    assert stocked["cheese_parmesan"][0]["name"] == "Grana Padano Hartkäse"
+    assert stocked["cheese_pecorino"][0]["name"] == "Pecorino Romano"
+    # both stocked -> identity matches on their own concepts
+    assert catalog.resolve_for_stock("parmesan", items, stocked)["kind"] == "identity"
+    assert catalog.resolve_for_stock("pecorino", items, stocked)["kind"] == "identity"
+    # recipe wanting parmesan with only pecorino stocked -> sibling note
+    only_pecorino = catalog.stock_map([items[1]])
+    res = catalog.resolve_for_stock("parmesan", [items[1]], only_pecorino)
+    assert res["kind"] == "sibling" and res["item_name"] == "Pecorino Romano"
+    only_grana = catalog.stock_map([items[0]])
+    res = catalog.resolve_for_stock("pecorino", [items[0]], only_grana)
+    assert res["kind"] == "sibling" and res["item_name"] == "Grana Padano Hartkäse"
+
+
 def test_rename_item_via_update(client):
     """Renaming through the update endpoint: works, rejects empty names
     and case-insensitive duplicates with 409."""

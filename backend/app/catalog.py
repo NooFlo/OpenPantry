@@ -398,7 +398,14 @@ CONCEPTS: dict[str, dict] = {
         "egg yolks", "medium eggs", "eier", "ei", "eier (größe m)"]},
     "cheese_parmesan": {"de": "Parmesan", "en": "parmesan",
         "family": "cheese", "aliases": ["parmesan", "parmesan cheese",
-        "parmigiano", "pecorino", "pecorino cheese", "grana padano"]},
+        "parmigiano", "parmigiano reggiano", "grana padano"],
+        "sibling_of": ["cheese_pecorino"]},
+    # Pecorino is sheep's milk, notably sharper and saltier than parmesan/
+    # grana and THE cheese of Roman pasta dishes — never merge their stock
+    # (scans used to stack them); recipes still cross-suggest via sibling
+    "cheese_pecorino": {"de": "Pecorino", "en": "pecorino",
+        "family": "cheese", "aliases": ["pecorino", "pecorino cheese",
+        "pecorino romano"], "sibling_of": ["cheese_parmesan"]},
     "cheese_gouda": {"de": "Gouda", "en": "cheddar", "family": "cheese",
         "aliases": ["cheddar cheese",
         "medium sharp cheddar cheese", "gouda", "red leicester cheese"]},
